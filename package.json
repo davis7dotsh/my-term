@@ -1,0 +1,10 @@
+{
+  "name": "better-cmux",
+  "private": true,
+  "scripts": {
+    "dev": "swift run better-cmux",
+    "check": "swift build && swift test",
+    "format": "swift format format --in-place --recursive Package.swift Sources Tests"
+  },
+  "type": "module"
+}
