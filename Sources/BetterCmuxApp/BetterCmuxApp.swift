@@ -41,7 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.activate(ignoringOtherApps: true)
 
     DispatchQueue.main.async {
-      NSApp.windows.first?.makeKeyAndOrderFront(nil)
+      for window in NSApp.windows {
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
+        window.isMovableByWindowBackground = true
+        window.makeKeyAndOrderFront(nil)
+      }
     }
   }
 }

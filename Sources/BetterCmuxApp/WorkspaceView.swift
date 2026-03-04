@@ -5,43 +5,38 @@ struct WorkspaceView: View {
   let model: WindowStore
 
   var body: some View {
-    VStack(spacing: 18) {
+    VStack(spacing: 0) {
       header
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 10)
+
       TabStripView(window: window, model: model)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
+
       terminalDeck
     }
     .foregroundStyle(.white)
   }
 
   private var header: some View {
-    HStack(alignment: .bottom, spacing: 18) {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Window")
-          .font(.system(size: 11, weight: .bold, design: .rounded))
-          .foregroundStyle(Color.white.opacity(0.56))
-          .textCase(.uppercase)
-
-        TextField(
-          "Window name",
-          text: Binding(
-            get: { window.title },
-            set: { model.renameWindow(window.id, to: $0) }
-          )
+    HStack(alignment: .center) {
+      TextField(
+        "Window name",
+        text: Binding(
+          get: { window.title },
+          set: { model.renameWindow(window.id, to: $0) }
         )
-        .textFieldStyle(.plain)
-        .font(.system(size: 34, weight: .black, design: .rounded))
-      }
+      )
+      .textFieldStyle(.plain)
+      .font(.system(size: 18, weight: .semibold))
+      .foregroundStyle(.white.opacity(0.88))
 
       Spacer()
 
-      HStack(spacing: 10) {
-        actionButton(title: "New Tab", systemImage: "plus") {
-          model.addTab(to: window.id)
-        }
-
-        actionButton(title: "Delete Window", systemImage: "trash") {
-          model.removeWindow(window.id)
-        }
+      compactButton(systemImage: "trash") {
+        model.removeWindow(window.id)
       }
     }
   }
@@ -49,67 +44,32 @@ struct WorkspaceView: View {
   private var terminalDeck: some View {
     ZStack {
       ForEach(window.tabs) { tab in
-        TerminalCard(
-          tab: tab,
-          isActive: window.selectedTab?.id == tab.id
-        )
-        .opacity(window.selectedTab?.id == tab.id ? 1 : 0)
-        .allowsHitTesting(window.selectedTab?.id == tab.id)
+        TerminalHostView(session: tab.session, isFocused: window.selectedTab?.id == tab.id)
+          .opacity(window.selectedTab?.id == tab.id ? 1 : 0)
+          .allowsHitTesting(window.selectedTab?.id == tab.id)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(.white.opacity(0.06), lineWidth: 1)
+    )
+    .padding(.horizontal, 14)
+    .padding(.bottom, 14)
   }
 
-  private func actionButton(title: String, systemImage: String, action: @escaping () -> Void)
-    -> some View
-  {
+  private func compactButton(systemImage: String, action: @escaping () -> Void) -> some View {
     Button(action: action) {
-      Label(title, systemImage: systemImage)
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+      Image(systemName: systemImage)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.white.opacity(0.4))
+        .frame(width: 28, height: 28)
         .background(
-          Capsule(style: .continuous)
-            .fill(Color.white.opacity(0.08))
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(.white.opacity(0.06))
         )
     }
     .buttonStyle(.plain)
-  }
-}
-
-private struct TerminalCard: View {
-  let tab: TerminalTab
-  let isActive: Bool
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(tab.title)
-            .font(.system(size: 15, weight: .bold, design: .rounded))
-
-          Text(tab.workingDirectory)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(Color.white.opacity(0.58))
-            .lineLimit(1)
-        }
-
-        Spacer()
-      }
-
-      TerminalHostView(session: tab.session, isFocused: isActive)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-    }
-    .padding(20)
-    .background(
-      RoundedRectangle(cornerRadius: 30, style: .continuous)
-        .fill(Color.white.opacity(0.06))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 30, style: .continuous)
-        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-    )
-    .shadow(color: Color.black.opacity(0.28), radius: 24, x: 0, y: 16)
   }
 }

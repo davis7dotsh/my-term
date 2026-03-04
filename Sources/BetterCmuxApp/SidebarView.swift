@@ -1,14 +1,18 @@
+import AppKit
 import SwiftUI
 
 struct SidebarView: View {
   let model: WindowStore
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(spacing: 0) {
       header
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
 
       ScrollView {
-        LazyVStack(spacing: 10) {
+        LazyVStack(spacing: 2) {
           ForEach(model.windows) { window in
             SidebarWindowRow(
               window: window,
@@ -18,33 +22,30 @@ struct SidebarView: View {
             )
           }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(OverlayScrollerConfigurator())
       }
     }
-    .padding(18)
     .foregroundStyle(.white)
   }
 
   private var header: some View {
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 6) {
-        Text("better-cmux")
-          .font(.system(size: 24, weight: .black, design: .rounded))
-
-        Text("Window-first terminal draft")
-          .font(.system(size: 12, weight: .medium, design: .rounded))
-          .foregroundStyle(Color.white.opacity(0.66))
-      }
+    HStack {
+      Text("better-cmux")
+        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+        .foregroundStyle(.white.opacity(0.4))
 
       Spacer()
 
       Button(action: { model.addWindow() }) {
         Image(systemName: "plus")
-          .font(.system(size: 13, weight: .bold))
-          .frame(width: 34, height: 34)
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(.white.opacity(0.5))
+          .frame(width: 28, height: 28)
+          .contentShape(Rectangle())
           .background(
-            Circle()
-              .fill(Color.white.opacity(0.11))
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+              .fill(.white.opacity(0.06))
           )
       }
       .buttonStyle(.plain)
@@ -58,64 +59,62 @@ private struct SidebarWindowRow: View {
   let onSelect: () -> Void
   let onRemove: () -> Void
 
+  private let accent = Color(red: 0.35, green: 0.68, blue: 1.0)
+
   var body: some View {
     Button(action: onSelect) {
-      HStack(alignment: .top, spacing: 12) {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-          .fill(
-            LinearGradient(
-              colors: isSelected
-                ? [
-                  Color(red: 0.19, green: 0.61, blue: 0.97),
-                  Color(red: 0.12, green: 0.35, blue: 0.89),
-                ]
-                : [Color.white.opacity(0.12), Color.white.opacity(0.06)],
-              startPoint: .topLeading,
-              endPoint: .bottomTrailing
-            )
-          )
-          .frame(width: 40, height: 48)
-          .overlay(
-            Image(
-              systemName: isSelected ? "rectangle.stack.fill.badge.person.crop" : "rectangle.stack"
-            )
-            .font(.system(size: 16, weight: .semibold))
-          )
+      HStack(spacing: 0) {
+        RoundedRectangle(cornerRadius: 1.5)
+          .fill(isSelected ? accent : .clear)
+          .frame(width: 3, height: 16)
+          .padding(.trailing, 8)
 
-        VStack(alignment: .leading, spacing: 4) {
+        Image(systemName: "terminal")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(isSelected ? accent : .white.opacity(0.35))
+          .frame(width: 18)
+          .padding(.trailing, 8)
+
+        VStack(alignment: .leading, spacing: 1) {
           Text(window.title)
-            .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .multilineTextAlignment(.leading)
-            .lineLimit(2)
+            .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+            .foregroundStyle(.white.opacity(isSelected ? 0.92 : 0.65))
+            .lineLimit(1)
 
           Text("\(window.tabs.count) \(window.tabs.count == 1 ? "tab" : "tabs")")
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(Color.white.opacity(0.62))
+            .font(.system(size: 11))
+            .foregroundStyle(.white.opacity(0.28))
         }
 
         Spacer(minLength: 0)
       }
-      .padding(14)
-      .background(background)
-      .overlay(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-          .strokeBorder(
-            isSelected ? Color.white.opacity(0.18) : Color.white.opacity(0.06), lineWidth: 1)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 8)
+      .background(
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+          .fill(isSelected ? .white.opacity(0.07) : .clear)
       )
+      .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     .buttonStyle(.plain)
     .contextMenu {
       Button("Delete Window", role: .destructive, action: onRemove)
     }
   }
+}
 
-  private var background: some ShapeStyle {
-    LinearGradient(
-      colors: isSelected
-        ? [Color.white.opacity(0.16), Color(red: 0.07, green: 0.15, blue: 0.28)]
-        : [Color.white.opacity(0.05), Color.white.opacity(0.03)],
-      startPoint: .topLeading,
-      endPoint: .bottomTrailing
-    )
+private struct OverlayScrollerConfigurator: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { ScrollerStyleView() }
+  func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class ScrollerStyleView: NSView {
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    DispatchQueue.main.async { [weak self] in
+      guard let scrollView = self?.enclosingScrollView else { return }
+      scrollView.scrollerStyle = .overlay
+      scrollView.scrollerKnobStyle = .light
+    }
   }
 }

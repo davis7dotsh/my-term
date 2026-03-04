@@ -17,22 +17,46 @@ final class TerminalSession: TerminalSessioning {
   private let terminalView: LocalProcessTerminalView
   private let workingDirectory: String
 
+  private static let bgColor = NSColor(srgbRed: 0.051, green: 0.067, blue: 0.090, alpha: 1)
+  private static let fgColor = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1)
+  private static let selectionColor = NSColor(srgbRed: 0.149, green: 0.310, blue: 0.471, alpha: 1)
+
+  private static func c(_ r: UInt16, _ g: UInt16, _ b: UInt16) -> Color {
+    Color(red: r &* 257, green: g &* 257, blue: b &* 257)
+  }
+
+  private static let ghDarkPalette: [Color] = [
+    c(0x48, 0x4f, 0x58), c(0xff, 0x7b, 0x72), c(0x3f, 0xb9, 0x50), c(0xd2, 0x99, 0x22),
+    c(0x58, 0xa6, 0xff), c(0xbc, 0x8c, 0xff), c(0x39, 0xc5, 0xcf), c(0xb1, 0xba, 0xc4),
+    c(0x6e, 0x76, 0x81), c(0xff, 0xa1, 0x98), c(0x56, 0xd3, 0x64), c(0xe3, 0xb3, 0x41),
+    c(0x79, 0xc0, 0xff), c(0xd2, 0xa8, 0xff), c(0x56, 0xd4, 0xdd), c(0xf0, 0xf6, 0xfc),
+  ]
+
   init(id: UUID, workingDirectory: String) {
     self.id = id
     self.workingDirectory = workingDirectory
 
+    let font = NSFont(name: "Berkeley Mono", size: 15)
+      ?? NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+
     let terminal = LocalProcessTerminalView(frame: .zero)
     terminal.autoresizingMask = [.width, .height]
-    terminal.font = NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular)
-    terminal.nativeForegroundColor = NSColor(calibratedRed: 0.89, green: 0.92, blue: 0.98, alpha: 1)
-    terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.03, green: 0.06, blue: 0.11, alpha: 1)
-    terminal.caretColor = NSColor(calibratedRed: 0.42, green: 0.76, blue: 0.98, alpha: 1)
-    terminal.caretTextColor = .white
-    terminal.selectedTextBackgroundColor = NSColor(
-      calibratedRed: 0.15, green: 0.27, blue: 0.42, alpha: 1)
+    terminal.font = font
+    terminal.nativeForegroundColor = Self.fgColor
+    terminal.nativeBackgroundColor = Self.bgColor
+    terminal.caretColor = Self.fgColor
+    terminal.caretTextColor = Self.bgColor
+    terminal.selectedTextBackgroundColor = Self.selectionColor
+    terminal.installColors(Self.ghDarkPalette)
+
+    let lineHeight = ceil(font.ascender - font.descender + font.leading)
 
     terminalView = terminal
-    hostView = TerminalViewportView(terminalView: terminal)
+    hostView = TerminalViewportView(
+      terminalView: terminal,
+      backgroundColor: Self.bgColor,
+      lineHeight: lineHeight
+    )
 
     launchShell()
   }
@@ -63,28 +87,111 @@ final class TerminalSession: TerminalSessioning {
 }
 
 private final class TerminalViewportView: NSView {
-  init(terminalView: NSView) {
+  private static let hPad: CGFloat = 12
+  private static let vPad: CGFloat = 8
+
+  private weak var terminalView: LocalProcessTerminalView?
+  private let lineHeight: CGFloat
+  private var scrollMonitor: Any?
+  private var scrollAccumulator: CGFloat = 0
+
+  init(
+    terminalView: LocalProcessTerminalView,
+    backgroundColor: NSColor,
+    lineHeight: CGFloat
+  ) {
+    self.terminalView = terminalView
+    self.lineHeight = lineHeight
     super.init(frame: .zero)
 
     wantsLayer = true
-    layer?.backgroundColor = NSColor(calibratedRed: 0.03, green: 0.06, blue: 0.11, alpha: 1).cgColor
-    layer?.cornerRadius = 24
-    layer?.cornerCurve = .continuous
-    clipsToBounds = true
+    layer?.backgroundColor = backgroundColor.cgColor
 
-    terminalView.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(terminalView)
+    let tv = terminalView as NSView
+    tv.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(tv)
 
     NSLayoutConstraint.activate([
-      terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      terminalView.topAnchor.constraint(equalTo: topAnchor),
-      terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      tv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.hPad),
+      tv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.hPad),
+      tv.topAnchor.constraint(equalTo: topAnchor, constant: Self.vPad),
+      tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.vPad),
     ])
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {
     fatalError("init(coder:) has not been implemented")
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    guard window != nil else { return }
+    configureScrollers()
+    installScrollMonitor()
+  }
+
+  override func removeFromSuperview() {
+    if let monitor = scrollMonitor {
+      NSEvent.removeMonitor(monitor)
+      scrollMonitor = nil
+    }
+    super.removeFromSuperview()
+  }
+
+
+  private func configureScrollers() {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+      guard let self else { return }
+      self.walkSubviews(self) { view in
+        guard let scroller = view as? NSScroller else { return }
+        scroller.scrollerStyle = .overlay
+        scroller.knobStyle = .light
+      }
+    }
+  }
+
+  private func walkSubviews(_ root: NSView, _ visitor: (NSView) -> Void) {
+    for sub in root.subviews {
+      visitor(sub)
+      walkSubviews(sub, visitor)
+    }
+  }
+
+  private func installScrollMonitor() {
+    guard scrollMonitor == nil else { return }
+    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+      self?.handleScroll(event) ?? event
+    }
+  }
+
+  private func handleScroll(_ event: NSEvent) -> NSEvent? {
+    guard let terminalView, let window, event.window === window else { return event }
+    let point = terminalView.convert(event.locationInWindow, from: nil)
+    guard terminalView.bounds.contains(point) else { return event }
+
+    if event.phase == .began {
+      scrollAccumulator = 0
+    }
+
+    let delta: CGFloat
+    if event.hasPreciseScrollingDeltas {
+      delta = event.scrollingDeltaY / lineHeight
+    } else {
+      delta = event.scrollingDeltaY * 3
+    }
+
+    scrollAccumulator += delta
+    let lines = Int(scrollAccumulator)
+    if lines != 0 {
+      scrollAccumulator -= CGFloat(lines)
+      if lines > 0 {
+        terminalView.scrollUp(lines: abs(lines))
+      } else {
+        terminalView.scrollDown(lines: abs(lines))
+      }
+    }
+
+    return nil
   }
 }

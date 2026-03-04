@@ -8,28 +8,21 @@ struct ContentAreaView: View {
       if let selectedWindow = model.selectedWindow {
         WorkspaceView(window: selectedWindow, model: model)
       } else {
-        EmptyStateView()
+        emptyState
       }
     }
-    .padding(26)
   }
-}
 
-private struct EmptyStateView: View {
-  var body: some View {
-    VStack(spacing: 14) {
-      Image(systemName: "sidebar.left")
-        .font(.system(size: 48, weight: .regular))
-        .foregroundStyle(Color.white.opacity(0.72))
+  private var emptyState: some View {
+    VStack(spacing: 8) {
+      Image(systemName: "terminal")
+        .font(.system(size: 32, weight: .thin))
+        .foregroundStyle(.white.opacity(0.18))
 
       Text("No window selected")
-        .font(.system(size: 28, weight: .bold, design: .rounded))
-
-      Text("Create a window in the sidebar to spin up its own terminal stack.")
-        .font(.system(size: 15, weight: .medium, design: .rounded))
-        .foregroundStyle(Color.white.opacity(0.7))
+        .font(.system(size: 14, weight: .medium))
+        .foregroundStyle(.white.opacity(0.3))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .foregroundStyle(.white)
   }
 }
