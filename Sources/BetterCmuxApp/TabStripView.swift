@@ -7,45 +7,35 @@ struct TabStripView: View {
   @State private var renamingTab: TerminalTab?
 
   var body: some View {
-    HStack(spacing: 0) {
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 2) {
-          ForEach(window.tabs) { tab in
-            TabChip(
-              tab: tab,
-              isSelected: window.selectedTab?.id == tab.id,
-              canClose: window.tabs.count > 1,
-              onSelect: { model.selectTab(windowID: window.id, tabID: tab.id) },
-              onRename: {
-                renameDraft = tab.title
-                renamingTab = tab
-              },
-              onClose: { model.closeTab(windowID: window.id, tabID: tab.id) }
-            )
-          }
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 2) {
+        ForEach(window.tabs) { tab in
+          TabChip(
+            tab: tab,
+            isSelected: window.selectedTab?.id == tab.id,
+            canClose: window.tabs.count > 1,
+            onSelect: { model.selectTab(windowID: window.id, tabID: tab.id) },
+            onRename: {
+              renameDraft = tab.title
+              renamingTab = tab
+            },
+            onClose: { model.closeTab(windowID: window.id, tabID: tab.id) }
+          )
         }
-        .padding(.horizontal, 6)
-        .padding(.top, 6)
       }
-
-      Spacer(minLength: 0)
-
-      Button(action: { model.addTab(to: window.id) }) {
-        Image(systemName: "plus")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.secondary)
-          .frame(width: 28, height: 28)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.borderless)
-      .padding(.trailing, 8)
+      .padding(.horizontal, 6)
       .padding(.top, 6)
     }
     .frame(height: 38)
-    .background(Color(nsColor: .controlBackgroundColor))
+    .background {
+      ZStack {
+        ChromeMaterialView()
+        Color.black.opacity(0.12)
+      }
+    }
     .overlay(alignment: .bottom) {
       Rectangle()
-        .fill(.quaternary)
+        .fill(.white.opacity(0.06))
         .frame(height: 1)
     }
     .sheet(item: $renamingTab) { tab in
@@ -104,7 +94,7 @@ private struct TabChip: View {
     )
     .overlay(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .strokeBorder(.quaternary, lineWidth: isSelected ? 1 : 0)
+        .strokeBorder(.white.opacity(isSelected ? 0.08 : 0), lineWidth: 1)
     )
     .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     .onTapGesture { onSelect() }
@@ -119,8 +109,8 @@ private struct TabChip: View {
 
   private var chipBackground: some ShapeStyle {
     if isSelected {
-      return AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
+      return AnyShapeStyle(Color.white.opacity(0.10))
     }
-    return AnyShapeStyle(Color.primary.opacity(isHovering ? 0.06 : 0))
+    return AnyShapeStyle(Color.white.opacity(isHovering ? 0.05 : 0))
   }
 }
