@@ -25,8 +25,45 @@ struct BetterCmuxApp: App {
           model.addTab()
         }
         .keyboardShortcut("t", modifiers: .command)
+
+        Button("Close Tab") {
+          model.closeSelectedTab()
+        }
+        .keyboardShortcut("w", modifiers: .command)
+        .disabled((model.selectedWindow?.tabs.count ?? 0) <= 1)
+      }
+
+      CommandMenu("Windows") {
+        ForEach(Array(model.windows.prefix(9).enumerated()), id: \.element.id) { index, window in
+          Button(window.title) {
+            model.selectWindow(at: index)
+          }
+          .keyboardShortcut(Self.numberShortcut(for: index), modifiers: .command)
+        }
+      }
+
+      CommandMenu("Tabs") {
+        Button("Next Tab") {
+          model.cycleSelectedTab()
+        }
+        .keyboardShortcut(.tab, modifiers: .control)
+        .disabled((model.selectedWindow?.tabs.count ?? 0) <= 1)
+
+        ForEach(Array((model.selectedWindow?.tabs ?? []).prefix(9).enumerated()), id: \.element.id)
+        {
+          index,
+          tab in
+          Button(tab.title) {
+            model.selectTab(at: index)
+          }
+          .keyboardShortcut(Self.numberShortcut(for: index), modifiers: .control)
+        }
       }
     }
+  }
+
+  private static func numberShortcut(for index: Int) -> KeyEquivalent {
+    KeyEquivalent(Character(String(index + 1)))
   }
 }
 
@@ -42,10 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     DispatchQueue.main.async {
       for window in NSApp.windows {
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
         window.makeKeyAndOrderFront(nil)
       }
     }

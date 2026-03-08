@@ -1,21 +1,33 @@
+import AppKit
 import SwiftUI
 
 struct RootView: View {
   let model: WindowStore
 
   var body: some View {
-    HStack(spacing: 0) {
+    HSplitView {
       SidebarView(model: model)
-        .frame(width: 220)
-        .background(Color(red: 0.086, green: 0.106, blue: 0.133))
-
-      Color.white.opacity(0.06)
-        .frame(width: 1)
-
+        .frame(minWidth: 200, maxWidth: 350)
       ContentAreaView(model: model)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(red: 0.051, green: 0.067, blue: 0.090))
+    .background(WindowTitleUpdater(title: windowTitle))
+  }
+
+  private var windowTitle: String {
+    model.selectedWindow?.selectedTab?.session.currentWorkingDirectory
+      ?? model.selectedWindow?.selectedTab?.workingDirectory
+      ?? "BetterCmux"
+  }
+}
+
+private struct WindowTitleUpdater: NSViewRepresentable {
+  let title: String
+
+  func makeNSView(context: Context) -> NSView { NSView() }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    DispatchQueue.main.async {
+      nsView.window?.title = title
+    }
   }
 }

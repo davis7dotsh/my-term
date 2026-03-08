@@ -3,102 +3,100 @@ import SwiftUI
 
 struct SidebarView: View {
   let model: WindowStore
+  @State private var renameDraft = ""
+  @State private var renamingWindow: WorkspaceWindow?
 
   var body: some View {
-    VStack(spacing: 0) {
-      header
-        .padding(.horizontal, 14)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
+    List(selection: selectedWindowID) {
+      ForEach(model.windows) { window in
+        SidebarWindowRow(
+          window: window,
+          canClose: model.windows.count > 1,
+          onRemove: { model.removeWindow(window.id) }
+        )
+        .tag(window.id)
+        .contextMenu {
+          Button("Rename Window") {
+            renameDraft = window.title
+            renamingWindow = window
+          }
 
-      ScrollView {
-        LazyVStack(spacing: 2) {
-          ForEach(model.windows) { window in
-            SidebarWindowRow(
-              window: window,
-              isSelected: model.selectedWindow?.id == window.id,
-              onSelect: { model.selectWindow(window.id) },
-              onRemove: { model.removeWindow(window.id) }
-            )
+          Button("Delete Window", role: .destructive) {
+            model.removeWindow(window.id)
           }
         }
-        .padding(.horizontal, 8)
-        .background(OverlayScrollerConfigurator())
       }
     }
-    .foregroundStyle(.white)
+    .listStyle(.sidebar)
+    .scrollContentBackground(.hidden)
+    .background {
+      ZStack {
+        ChromeMaterialView()
+        Color.black.opacity(0.18)
+        OverlayScrollerConfigurator()
+      }
+    }
+    .sheet(item: $renamingWindow) { window in
+      RenameSheet(
+        title: "Rename Window",
+        prompt: "Window name",
+        value: renameDraft,
+        onCancel: { renamingWindow = nil },
+        onSave: { title in
+          model.renameWindow(window.id, to: title)
+          renamingWindow = nil
+        }
+      )
+    }
   }
 
-  private var header: some View {
-    HStack {
-      Text("better-cmux")
-        .font(.system(size: 13, weight: .semibold, design: .monospaced))
-        .foregroundStyle(.white.opacity(0.4))
-
-      Spacer()
-
-      Button(action: { model.addWindow() }) {
-        Image(systemName: "plus")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.white.opacity(0.5))
-          .frame(width: 28, height: 28)
-          .contentShape(Rectangle())
-          .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-              .fill(.white.opacity(0.06))
-          )
+  private var selectedWindowID: Binding<UUID?> {
+    .init(
+      get: { model.selectedWindowID },
+      set: {
+        guard let id = $0 else { return }
+        model.selectWindow(id)
       }
-      .buttonStyle(.plain)
-    }
+    )
   }
 }
 
 private struct SidebarWindowRow: View {
   let window: WorkspaceWindow
-  let isSelected: Bool
-  let onSelect: () -> Void
+  let canClose: Bool
   let onRemove: () -> Void
-
-  private let accent = Color(red: 0.35, green: 0.68, blue: 1.0)
+  @State private var isHoveringClose = false
 
   var body: some View {
-    Button(action: onSelect) {
-      HStack(spacing: 0) {
-        RoundedRectangle(cornerRadius: 1.5)
-          .fill(isSelected ? accent : .clear)
-          .frame(width: 3, height: 16)
-          .padding(.trailing, 8)
+    HStack(spacing: 10) {
+      Image(systemName: "terminal")
 
-        Image(systemName: "terminal")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundStyle(isSelected ? accent : .white.opacity(0.35))
-          .frame(width: 18)
-          .padding(.trailing, 8)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(window.title)
+          .lineLimit(1)
 
-        VStack(alignment: .leading, spacing: 1) {
-          Text(window.title)
-            .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-            .foregroundStyle(.white.opacity(isSelected ? 0.92 : 0.65))
-            .lineLimit(1)
-
-          Text("\(window.tabs.count) \(window.tabs.count == 1 ? "tab" : "tabs")")
-            .font(.system(size: 11))
-            .foregroundStyle(.white.opacity(0.28))
-        }
-
-        Spacer(minLength: 0)
+        Text("\(window.tabs.count) \(window.tabs.count == 1 ? "tab" : "tabs")")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
-      .padding(.horizontal, 10)
-      .padding(.vertical, 8)
-      .background(
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-          .fill(isSelected ? .white.opacity(0.07) : .clear)
-      )
-      .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-    .buttonStyle(.plain)
-    .contextMenu {
-      Button("Delete Window", role: .destructive, action: onRemove)
+
+      Spacer(minLength: 8)
+
+      if canClose {
+        Button(action: onRemove) {
+          Image(systemName: "xmark")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 18, height: 18)
+            .contentShape(Rectangle())
+            .background(
+              Circle()
+                .fill(.white.opacity(isHoveringClose ? 0.18 : 0))
+            )
+        }
+        .buttonStyle(.borderless)
+        .onHover { isHoveringClose = $0 }
+      }
     }
   }
 }
@@ -113,6 +111,7 @@ private final class ScrollerStyleView: NSView {
     super.viewDidMoveToWindow()
     DispatchQueue.main.async { [weak self] in
       guard let scrollView = self?.enclosingScrollView else { return }
+      scrollView.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
       scrollView.scrollerStyle = .overlay
       scrollView.scrollerKnobStyle = .light
     }

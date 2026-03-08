@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import SwiftTerm
 
@@ -36,7 +37,8 @@ final class TerminalSession: TerminalSessioning {
     self.id = id
     self.workingDirectory = workingDirectory
 
-    let font = NSFont(name: "Berkeley Mono", size: 15)
+    let font =
+      NSFont(name: "Berkeley Mono", size: 15)
       ?? NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
 
     let terminal = LocalProcessTerminalView(frame: .zero)
@@ -65,6 +67,10 @@ final class TerminalSession: TerminalSessioning {
     hostView.window?.makeFirstResponder(terminalView)
   }
 
+  var currentWorkingDirectory: String? {
+    Self.currentWorkingDirectory(for: terminalView.process.shellPid)
+  }
+
   private func launchShell() {
     let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     var environment = ProcessInfo.processInfo.environment
@@ -73,16 +79,31 @@ final class TerminalSession: TerminalSessioning {
 
     terminalView.startProcess(
       executable: shell,
-      args: ["-l"],
+      args: ["-i"],
       environment: environment.map { "\($0.key)=\($0.value)" },
-      execName: "-" + URL(fileURLWithPath: shell).lastPathComponent
+      execName: URL(fileURLWithPath: shell).lastPathComponent,
+      currentDirectory: workingDirectory
     )
-
-    terminalView.feed(text: #"cd "\#(shellEscaped(workingDirectory))" && clear"# + "\n")
   }
 
-  private func shellEscaped(_ value: String) -> String {
-    value.replacingOccurrences(of: "\"", with: #"\""#)
+  private static func currentWorkingDirectory(for pid: pid_t) -> String? {
+    guard pid > 0 else { return nil }
+
+    var info = proc_vnodepathinfo()
+    let bufferSize = Int32(MemoryLayout.size(ofValue: info))
+    let result = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: UInt8.self, capacity: Int(bufferSize)) {
+        proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, $0, bufferSize)
+      }
+    }
+
+    guard result == bufferSize else { return nil }
+
+    return withUnsafePointer(to: info.pvi_cdir.vip_path) {
+      $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) {
+        String(cString: $0)
+      }
+    }
   }
 }
 
@@ -138,7 +159,6 @@ private final class TerminalViewportView: NSView {
     }
     super.removeFromSuperview()
   }
-
 
   private func configureScrollers() {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in

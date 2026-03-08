@@ -72,6 +72,7 @@ private enum StubSessionFactory {
 private final class StubSession: TerminalSessioning {
   let id: UUID
   let hostView = NSView()
+  let currentWorkingDirectory: String? = nil
 
   init(id: UUID) {
     self.id = id

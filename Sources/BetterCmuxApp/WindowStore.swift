@@ -46,7 +46,10 @@ final class WindowStore {
   }
 
   func addWindow() {
-    let workingDirectory = selectedWindow?.selectedTab?.workingDirectory ?? Self.homeDirectory
+    let workingDirectory =
+      selectedWindow?.selectedTab?.session.currentWorkingDirectory
+      ?? selectedWindow?.selectedTab?.workingDirectory
+      ?? Self.homeDirectory
     let nextIndex = windows.count + 1
     let snapshot = Self.seedWindowSnapshot(index: nextIndex, workingDirectory: workingDirectory)
     let tabs = snapshot.tabs.map { tab in
@@ -100,10 +103,18 @@ final class WindowStore {
     persist()
   }
 
+  func selectWindow(at index: Int) {
+    guard let window = windows[safe: index] else { return }
+    selectWindow(window.id)
+  }
+
   func addTab(to windowID: UUID? = nil) {
     guard let window = resolvedWindow(windowID) else { return }
 
-    let workingDirectory = window.selectedTab?.workingDirectory ?? Self.homeDirectory
+    let workingDirectory =
+      window.selectedTab?.session.currentWorkingDirectory
+      ?? window.selectedTab?.workingDirectory
+      ?? Self.homeDirectory
     let snapshot = TerminalTabSnapshot(
       id: UUID(),
       title: Self.defaultTabTitle(index: window.tabs.count + 1, workingDirectory: workingDirectory),
@@ -127,6 +138,11 @@ final class WindowStore {
     persist()
   }
 
+  func closeSelectedTab() {
+    guard let window = selectedWindow, let tabID = window.selectedTab?.id else { return }
+    closeTab(windowID: window.id, tabID: tabID)
+  }
+
   func selectTab(windowID: UUID, tabID: UUID) {
     guard let window = windows.first(where: { $0.id == windowID }),
       window.tabs.contains(where: { $0.id == tabID })
@@ -134,6 +150,28 @@ final class WindowStore {
 
     window.selectedTabID = tabID
     persist()
+  }
+
+  func selectTab(at index: Int, in windowID: UUID? = nil) {
+    guard let window = resolvedWindow(windowID), let tab = window.tabs[safe: index] else { return }
+    selectTab(windowID: window.id, tabID: tab.id)
+  }
+
+  func cycleSelectedTab(forward: Bool = true) {
+    guard let window = selectedWindow,
+      let selectedTabID = window.selectedTab?.id,
+      let currentIndex = window.tabs.firstIndex(where: { $0.id == selectedTabID }),
+      !window.tabs.isEmpty
+    else { return }
+
+    let nextIndex =
+      if forward {
+        (currentIndex + 1) % window.tabs.count
+      } else {
+        (currentIndex - 1 + window.tabs.count) % window.tabs.count
+      }
+
+    selectTab(windowID: window.id, tabID: window.tabs[nextIndex].id)
   }
 
   func renameTab(windowID: UUID, tabID: UUID, to title: String) {

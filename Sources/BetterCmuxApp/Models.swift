@@ -24,6 +24,7 @@ struct TerminalTabSnapshot: Codable, Identifiable {
 protocol TerminalSessioning: AnyObject {
   var id: UUID { get }
   var hostView: NSView { get }
+  var currentWorkingDirectory: String? { get }
   func focus()
 }
 
