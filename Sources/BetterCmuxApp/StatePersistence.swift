@@ -2,20 +2,31 @@ import Foundation
 
 @MainActor
 struct StatePersistence {
-  var load: () -> AppSnapshot?
-  var save: (AppSnapshot) -> Void
+  var load: () -> PersistedAppState?
+  var save: (PersistedAppState) -> Void
 
   static let live = Self(
     load: {
       let decoder = JSONDecoder()
       guard let data = try? Data(contentsOf: storageURL) else { return nil }
-      return try? decoder.decode(AppSnapshot.self, from: data)
+      if let persistedState = try? decoder.decode(PersistedAppState.self, from: data) {
+        return persistedState
+      }
+
+      guard let legacyWorkspace = try? decoder.decode(AppSnapshot.self, from: data) else {
+        return nil
+      }
+      return .init(
+        activeProfileID: nil,
+        currentWorkspace: legacyWorkspace,
+        profiles: []
+      )
     },
-    save: { snapshot in
+    save: { state in
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-      guard let data = try? encoder.encode(snapshot) else { return }
+      guard let data = try? encoder.encode(state) else { return }
 
       let directory = storageURL.deletingLastPathComponent()
       try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

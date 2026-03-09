@@ -14,8 +14,7 @@ struct RootView: View {
   }
 
   private var windowTitle: String {
-    model.selectedWindow?.selectedTab?.session.currentWorkingDirectory
-      ?? model.selectedWindow?.selectedTab?.workingDirectory
+    model.selectedWindow?.selectedTab?.workingDirectory
       ?? "BetterCmux"
   }
 }

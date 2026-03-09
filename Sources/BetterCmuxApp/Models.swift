@@ -2,22 +2,50 @@ import AppKit
 import Foundation
 import Observation
 
-struct AppSnapshot: Codable {
+struct PersistedAppState: Codable, Equatable {
+  var activeProfileID: UUID?
+  var currentWorkspace: AppSnapshot
+  var profiles: [WorkspaceProfileSnapshot]
+}
+
+struct AppSnapshot: Codable, Equatable {
   var selectedWindowID: UUID?
   var windows: [WorkspaceWindowSnapshot]
 }
 
-struct WorkspaceWindowSnapshot: Codable, Identifiable {
+struct WorkspaceProfileSnapshot: Codable, Equatable, Identifiable {
+  var id: UUID
+  var name: String
+  var workspace: AppSnapshot
+}
+
+struct WorkspaceWindowSnapshot: Codable, Equatable, Identifiable {
   var id: UUID
   var title: String
   var selectedTabID: UUID?
   var tabs: [TerminalTabSnapshot]
 }
 
-struct TerminalTabSnapshot: Codable, Identifiable {
+struct TerminalTabSnapshot: Codable, Equatable, Identifiable {
   var id: UUID
   var title: String
   var workingDirectory: String
+  var hasCustomTitle: Bool
+
+  init(id: UUID, title: String, workingDirectory: String, hasCustomTitle: Bool = false) {
+    self.id = id
+    self.title = title
+    self.workingDirectory = workingDirectory
+    self.hasCustomTitle = hasCustomTitle
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    title = try container.decode(String.self, forKey: .title)
+    workingDirectory = try container.decode(String.self, forKey: .workingDirectory)
+    hasCustomTitle = try container.decodeIfPresent(Bool.self, forKey: .hasCustomTitle) ?? false
+  }
 }
 
 @MainActor
@@ -34,17 +62,20 @@ final class TerminalTab: Identifiable {
   let id: UUID
   var title: String
   var workingDirectory: String
+  var hasCustomTitle: Bool
   let session: any TerminalSessioning
 
   init(
     id: UUID,
     title: String,
     workingDirectory: String,
+    hasCustomTitle: Bool,
     session: any TerminalSessioning
   ) {
     self.id = id
     self.title = title
     self.workingDirectory = workingDirectory
+    self.hasCustomTitle = hasCustomTitle
     self.session = session
   }
 
@@ -53,12 +84,13 @@ final class TerminalTab: Identifiable {
       id: snapshot.id,
       title: snapshot.title,
       workingDirectory: snapshot.workingDirectory,
+      hasCustomTitle: snapshot.hasCustomTitle,
       session: session
     )
   }
 
   var snapshot: TerminalTabSnapshot {
-    .init(id: id, title: title, workingDirectory: workingDirectory)
+    .init(id: id, title: title, workingDirectory: workingDirectory, hasCustomTitle: hasCustomTitle)
   }
 }
 

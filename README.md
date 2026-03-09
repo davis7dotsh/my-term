@@ -30,5 +30,6 @@ bun run check
 ## Notes
 
 - The current draft uses `SwiftTerm` for live terminal sessions so we can validate the product shape quickly.
-- Window and tab metadata persist to `~/Library/Application Support/better-cmux/state.json`.
+- Window, tab, and profile metadata persist to `~/Library/Application Support/better-cmux/state.json`.
+- Active profiles keep their windows, tabs, and working directories synced in the background and on app sleep/quit.
 - Live shell process state is not restored on relaunch yet.

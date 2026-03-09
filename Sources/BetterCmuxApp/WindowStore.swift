@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -8,41 +9,62 @@ final class WindowStore {
 
   var windows: [WorkspaceWindow]
   var selectedWindowID: UUID?
+  var profiles: [WorkspaceProfileSnapshot]
+  var activeProfileID: UUID?
 
   private let persistence: StatePersistence
   private let makeSession: SessionFactory
+  private let metadataRefreshInterval: TimeInterval
+  private let autosaveInterval: TimeInterval
+  private var metadataRefreshTimer: Timer?
+  private var autosaveTimer: Timer?
+  private var lifecycleObservers: [NSObjectProtocol] = []
+  private var workspaceLifecycleObservers: [NSObjectProtocol] = []
+  private var lastPersistedState: PersistedAppState?
 
   init(
     persistence: StatePersistence = .live,
-    sessionFactory: @escaping SessionFactory = LiveTerminalSessionFactory.makeSession
+    sessionFactory: @escaping SessionFactory = LiveTerminalSessionFactory.makeSession,
+    metadataRefreshInterval: TimeInterval = 0.75,
+    autosaveInterval: TimeInterval = 2
   ) {
     self.persistence = persistence
     makeSession = sessionFactory
+    self.metadataRefreshInterval = metadataRefreshInterval
+    self.autosaveInterval = autosaveInterval
 
-    let restored = persistence.load()
-    let restoredWindows = restored?.windows.compactMap(Self.sanitizedWindowSnapshot) ?? []
-    let snapshots =
-      restoredWindows.isEmpty
-      ? [Self.seedWindowSnapshot(index: 1, workingDirectory: Self.homeDirectory)] : restoredWindows
+    let restoredState = persistence.load()
+    let restoredWorkspace = Self.sanitizedAppSnapshot(restoredState?.currentWorkspace)
+    let initialWorkspace = restoredWorkspace ?? Self.seedWorkspaceSnapshot()
+    let initialWindows = Self.buildWindows(from: initialWorkspace, sessionFactory: sessionFactory)
+    let initialProfiles = (restoredState?.profiles ?? []).compactMap(Self.sanitizedProfileSnapshot)
 
-    windows = snapshots.map { snapshot in
-      let tabs = snapshot.tabs.map { tab in
-        TerminalTab(snapshot: tab, session: sessionFactory(tab))
+    windows = initialWindows
+    selectedWindowID = Self.resolvedSelectedWindowID(
+      initialWorkspace.selectedWindowID, in: initialWindows)
+    profiles = initialProfiles
+    activeProfileID =
+      restoredState?.activeProfileID.flatMap { id in
+        initialProfiles.contains(where: { $0.id == id }) ? id : nil
       }
 
-      return WorkspaceWindow(snapshot: snapshot, tabs: tabs)
-    }
-
-    selectedWindowID =
-      restored?.selectedWindowID.flatMap { id in
-        windows.contains(where: { $0.id == id }) ? id : nil
-      } ?? windows.first?.id
-
+    installLifecycleObservers()
+    startMetadataRefresh()
+    startAutosave()
     persist()
   }
 
   var selectedWindow: WorkspaceWindow? {
     windows.first { $0.id == selectedWindowID } ?? windows.first
+  }
+
+  var activeProfile: WorkspaceProfileSnapshot? {
+    guard let activeProfileID else { return nil }
+    return profiles.first { $0.id == activeProfileID }
+  }
+
+  var nextProfileName: String {
+    "Profile \(profiles.count + 1)"
   }
 
   func addWindow() {
@@ -52,10 +74,7 @@ final class WindowStore {
       ?? Self.homeDirectory
     let nextIndex = windows.count + 1
     let snapshot = Self.seedWindowSnapshot(index: nextIndex, workingDirectory: workingDirectory)
-    let tabs = snapshot.tabs.map { tab in
-      TerminalTab(snapshot: tab, session: makeSession(tab))
-    }
-    let window = WorkspaceWindow(snapshot: snapshot, tabs: tabs)
+    let window = Self.makeWindow(from: snapshot, sessionFactory: makeSession)
 
     windows.append(window)
     selectedWindowID = window.id
@@ -66,16 +85,8 @@ final class WindowStore {
     guard let index = windows.firstIndex(where: { $0.id == windowID }) else { return }
 
     if windows.count == 1 {
-      let replacement = Self.seedWindowSnapshot(index: 1, workingDirectory: Self.homeDirectory)
-      windows = [
-        WorkspaceWindow(
-          snapshot: replacement,
-          tabs: replacement.tabs.map { tab in
-            TerminalTab(snapshot: tab, session: makeSession(tab))
-          }
-        )
-      ]
-      selectedWindowID = windows.first?.id
+      let replacement = Self.seedWorkspaceSnapshot()
+      replaceWorkspace(with: replacement)
       persist()
       return
     }
@@ -182,6 +193,56 @@ final class WindowStore {
     let sanitized = Self.sanitizedTitle(title, fallback: "Tab")
     guard tab.title != sanitized else { return }
     tab.title = sanitized
+    tab.hasCustomTitle = true
+    persist()
+  }
+
+  func saveProfile(named name: String) {
+    let sanitizedName = Self.sanitizedTitle(name, fallback: nextProfileName)
+    let profile = WorkspaceProfileSnapshot(
+      id: UUID(),
+      name: sanitizedName,
+      workspace: currentWorkspaceSnapshot()
+    )
+
+    profiles.append(profile)
+    activeProfileID = profile.id
+    persist()
+  }
+
+  func activateProfile(_ profileID: UUID) {
+    guard activeProfileID != profileID else { return }
+    persist()
+
+    guard let profile = profiles.first(where: { $0.id == profileID }),
+      let workspace = Self.sanitizedAppSnapshot(profile.workspace)
+    else { return }
+
+    replaceWorkspace(with: workspace)
+    activeProfileID = profile.id
+    persist()
+  }
+
+  func renameProfile(_ profileID: UUID, to name: String) {
+    guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+    let sanitizedName = Self.sanitizedTitle(name, fallback: "Profile")
+    guard profiles[index].name != sanitizedName else { return }
+    profiles[index].name = sanitizedName
+    persist()
+  }
+
+  func deleteProfile(_ profileID: UUID) {
+    guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+    profiles.remove(at: index)
+
+    if activeProfileID == profileID {
+      activeProfileID = nil
+    }
+
+    persist()
+  }
+
+  func refreshWorkspaceState() {
     persist()
   }
 
@@ -193,12 +254,172 @@ final class WindowStore {
     return selectedWindow
   }
 
+  private func replaceWorkspace(with snapshot: AppSnapshot) {
+    windows = Self.buildWindows(from: snapshot, sessionFactory: makeSession)
+    selectedWindowID = Self.resolvedSelectedWindowID(snapshot.selectedWindowID, in: windows)
+  }
+
+  private func startAutosave() {
+    autosaveTimer?.invalidate()
+    autosaveTimer = Timer.scheduledTimer(withTimeInterval: autosaveInterval, repeats: true) {
+      [weak self] _ in
+      Task { @MainActor in
+        self?.persist()
+      }
+    }
+  }
+
+  private func startMetadataRefresh() {
+    metadataRefreshTimer?.invalidate()
+    metadataRefreshTimer = Timer.scheduledTimer(
+      withTimeInterval: metadataRefreshInterval,
+      repeats: true
+    ) { [weak self] _ in
+      Task { @MainActor in
+        self?.refreshVisibleTabMetadata()
+      }
+    }
+  }
+
+  private func installLifecycleObservers() {
+    let notificationCenter = NotificationCenter.default
+
+    lifecycleObservers = [
+      notificationCenter.addObserver(
+        forName: NSApplication.willResignActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor in
+          self?.persist()
+        }
+      },
+      notificationCenter.addObserver(
+        forName: NSApplication.willTerminateNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor in
+          self?.persist()
+        }
+      },
+    ]
+
+    let workspaceNotificationCenter = NSWorkspace.shared.notificationCenter
+    workspaceLifecycleObservers = [
+      workspaceNotificationCenter.addObserver(
+        forName: NSWorkspace.willSleepNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor in
+          self?.persist()
+        }
+      }
+    ]
+  }
+
   private func persist() {
-    persistence.save(
-      AppSnapshot(
-        selectedWindowID: selectedWindowID,
-        windows: windows.map(\.snapshot)
-      )
+    let workspace = currentWorkspaceSnapshot()
+    syncActiveProfile(with: workspace)
+
+    let state = PersistedAppState(
+      activeProfileID: activeProfileID,
+      currentWorkspace: workspace,
+      profiles: profiles
+    )
+
+    guard state != lastPersistedState else { return }
+    persistence.save(state)
+    lastPersistedState = state
+  }
+
+  private func currentWorkspaceSnapshot() -> AppSnapshot {
+    syncAllTabMetadata()
+
+    return .init(
+      selectedWindowID: selectedWindowID,
+      windows: windows.map(\.snapshot)
+    )
+  }
+
+  private func refreshVisibleTabMetadata() {
+    guard let selectedWindow else { return }
+    syncTabMetadata(in: selectedWindow)
+  }
+
+  private func syncAllTabMetadata() {
+    for window in windows {
+      syncTabMetadata(in: window)
+    }
+  }
+
+  private func syncTabMetadata(in window: WorkspaceWindow) {
+    for (index, tab) in window.tabs.enumerated() {
+      let workingDirectory =
+        tab.session.currentWorkingDirectory?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+      guard let workingDirectory, !workingDirectory.isEmpty else { continue }
+      tab.workingDirectory = workingDirectory
+
+      guard !tab.hasCustomTitle else { continue }
+      tab.title = Self.defaultTabTitle(index: index + 1, workingDirectory: workingDirectory)
+    }
+  }
+
+  private func syncActiveProfile(with workspace: AppSnapshot) {
+    guard let activeProfileID,
+      let index = profiles.firstIndex(where: { $0.id == activeProfileID })
+    else { return }
+
+    profiles[index].workspace = workspace
+  }
+
+  private static func buildWindows(
+    from snapshot: AppSnapshot,
+    sessionFactory: SessionFactory
+  ) -> [WorkspaceWindow] {
+    snapshot.windows.map { makeWindow(from: $0, sessionFactory: sessionFactory) }
+  }
+
+  private static func makeWindow(
+    from snapshot: WorkspaceWindowSnapshot,
+    sessionFactory: SessionFactory
+  ) -> WorkspaceWindow {
+    let tabs = snapshot.tabs.map { TerminalTab(snapshot: $0, session: sessionFactory($0)) }
+    return WorkspaceWindow(snapshot: snapshot, tabs: tabs)
+  }
+
+  private static func resolvedSelectedWindowID(
+    _ selectedWindowID: UUID?,
+    in windows: [WorkspaceWindow]
+  ) -> UUID? {
+    selectedWindowID.flatMap { id in
+      windows.contains(where: { $0.id == id }) ? id : nil
+    } ?? windows.first?.id
+  }
+
+  private static func sanitizedAppSnapshot(_ snapshot: AppSnapshot?) -> AppSnapshot? {
+    guard let snapshot else { return nil }
+    let windows = snapshot.windows.compactMap(sanitizedWindowSnapshot)
+    guard !windows.isEmpty else { return nil }
+
+    return .init(
+      selectedWindowID: snapshot.selectedWindowID,
+      windows: windows
+    )
+  }
+
+  private static func sanitizedProfileSnapshot(_ profile: WorkspaceProfileSnapshot)
+    -> WorkspaceProfileSnapshot?
+  {
+    guard let workspace = sanitizedAppSnapshot(profile.workspace) else { return nil }
+
+    return .init(
+      id: profile.id,
+      name: sanitizedTitle(profile.name, fallback: "Profile"),
+      workspace: workspace
     )
   }
 
@@ -224,13 +445,21 @@ final class WindowStore {
     return .init(
       id: snapshot.id,
       title: sanitizedTitle(snapshot.title, fallback: "Tab"),
-      workingDirectory: workingDirectory
+      workingDirectory: workingDirectory,
+      hasCustomTitle: snapshot.hasCustomTitle
     )
   }
 
   private static func sanitizedTitle(_ title: String, fallback: String) -> String {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? fallback : trimmed
+  }
+
+  private static func seedWorkspaceSnapshot() -> AppSnapshot {
+    .init(
+      selectedWindowID: nil,
+      windows: [seedWindowSnapshot(index: 1, workingDirectory: homeDirectory)]
+    )
   }
 
   private static func seedWindowSnapshot(index: Int, workingDirectory: String)
