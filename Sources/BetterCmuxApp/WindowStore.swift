@@ -413,29 +413,39 @@ final class WindowStore {
     guard let selectedWindow else { return }
 
     for pane in selectedWindow.panes {
-      syncTabMetadata(in: pane)
+      guard let tab = pane.selectedTab,
+        let index = pane.tabs.firstIndex(where: { $0.id == tab.id })
+      else { continue }
+      syncTabMetadata(for: tab, index: index + 1)
     }
   }
 
   private func syncAllTabMetadata() {
     for window in windows {
       for pane in window.panes {
-        syncTabMetadata(in: pane)
+        for (index, tab) in pane.tabs.enumerated() {
+          syncTabMetadata(for: tab, index: index + 1)
+        }
       }
     }
   }
 
-  private func syncTabMetadata(in pane: WorkspacePane) {
-    for (index, tab) in pane.tabs.enumerated() {
-      let workingDirectory =
-        tab.session.currentWorkingDirectory?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+  private func syncTabMetadata(for tab: TerminalTab, index: Int) {
+    let workingDirectory =
+      tab.session.currentWorkingDirectory?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
 
-      guard let workingDirectory, !workingDirectory.isEmpty else { continue }
+    guard let workingDirectory, !workingDirectory.isEmpty else { return }
+
+    if tab.workingDirectory != workingDirectory {
       tab.workingDirectory = workingDirectory
+    }
 
-      guard !tab.hasCustomTitle else { continue }
-      tab.title = Self.defaultTabTitle(index: index + 1, workingDirectory: workingDirectory)
+    guard !tab.hasCustomTitle else { return }
+
+    let defaultTitle = Self.defaultTabTitle(index: index, workingDirectory: workingDirectory)
+    if tab.title != defaultTitle {
+      tab.title = defaultTitle
     }
   }
 

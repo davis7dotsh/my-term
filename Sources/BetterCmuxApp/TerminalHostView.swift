@@ -13,19 +13,15 @@ struct TerminalHostView: NSViewRepresentable {
   func makeNSView(context: Context) -> TerminalMountView {
     let view = TerminalMountView()
     view.onActivate = context.coordinator.activate
-    view.mount(session.hostView)
+    let remounted = view.mount(session.hostView, sessionID: session.id)
+    view.updateFocus(isFocused: isFocused, session: session, remounted: remounted)
     return view
   }
 
   func updateNSView(_ nsView: TerminalMountView, context: Context) {
     nsView.onActivate = context.coordinator.activate
-    nsView.mount(session.hostView)
-
-    guard isFocused else { return }
-
-    DispatchQueue.main.async {
-      session.focus()
-    }
+    let remounted = nsView.mount(session.hostView, sessionID: session.id)
+    nsView.updateFocus(isFocused: isFocused, session: session, remounted: remounted)
   }
 
   final class Coordinator {
@@ -43,6 +39,8 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalMountView: NSView {
   var onActivate: (() -> Void)?
+  private var mountedSessionID: UUID?
+  private var wasFocused = false
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -56,12 +54,13 @@ final class TerminalMountView: NSView {
     fatalError("init(coder:) has not been implemented")
   }
 
-  func mount(_ hostedView: NSView) {
-    guard hostedView.superview !== self else { return }
+  func mount(_ hostedView: NSView, sessionID: UUID) -> Bool {
+    guard hostedView.superview !== self || mountedSessionID != sessionID else { return false }
 
     hostedView.removeFromSuperview()
     hostedView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(hostedView)
+    mountedSessionID = sessionID
 
     NSLayoutConstraint.activate([
       hostedView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -69,6 +68,19 @@ final class TerminalMountView: NSView {
       hostedView.topAnchor.constraint(equalTo: topAnchor),
       hostedView.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+
+    return true
+  }
+
+  func updateFocus(isFocused: Bool, session: any TerminalSessioning, remounted: Bool) {
+    defer { wasFocused = isFocused }
+
+    guard isFocused else { return }
+    guard remounted || !wasFocused else { return }
+
+    DispatchQueue.main.async {
+      session.focus()
+    }
   }
 
   @objc
