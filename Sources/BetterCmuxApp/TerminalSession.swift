@@ -16,7 +16,10 @@ final class TerminalSession: TerminalSessioning {
   let hostView: NSView
 
   private let terminalView: LocalProcessTerminalView
+  private let processDelegate: TerminalProcessDelegate
   private let workingDirectory: String
+  private var reportedWorkingDirectory: String?
+  private static let scrollbackLines = 10_000
 
   private static let bgColor = NSColor(srgbRed: 0.051, green: 0.067, blue: 0.090, alpha: 1)
   private static let fgColor = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1)
@@ -42,6 +45,7 @@ final class TerminalSession: TerminalSessioning {
       ?? NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
 
     let terminal = LocalProcessTerminalView(frame: .zero)
+    let processDelegate = TerminalProcessDelegate()
     terminal.autoresizingMask = [.width, .height]
     terminal.font = font
     terminal.nativeForegroundColor = Self.fgColor
@@ -50,15 +54,15 @@ final class TerminalSession: TerminalSessioning {
     terminal.caretTextColor = Self.bgColor
     terminal.selectedTextBackgroundColor = Self.selectionColor
     terminal.installColors(Self.ghDarkPalette)
-
-    let lineHeight = ceil(font.ascender - font.descender + font.leading)
+    terminal.processDelegate = processDelegate
 
     terminalView = terminal
-    hostView = TerminalViewportView(
-      terminalView: terminal,
-      backgroundColor: Self.bgColor,
-      lineHeight: lineHeight
-    )
+    self.processDelegate = processDelegate
+    hostView = TerminalViewportView(terminalView: terminal, backgroundColor: Self.bgColor)
+
+    processDelegate.onCurrentDirectory = { [weak self] directory in
+      self?.reportedWorkingDirectory = Self.sanitizedWorkingDirectory(directory)
+    }
 
     launchShell()
   }
@@ -68,7 +72,7 @@ final class TerminalSession: TerminalSessioning {
   }
 
   var currentWorkingDirectory: String? {
-    Self.currentWorkingDirectory(for: terminalView.process.shellPid)
+    reportedWorkingDirectory ?? Self.currentWorkingDirectory(for: terminalView.process.shellPid)
   }
 
   private func launchShell() {
@@ -76,6 +80,7 @@ final class TerminalSession: TerminalSessioning {
     var environment = ProcessInfo.processInfo.environment
     environment["TERM_PROGRAM"] = "better-cmux"
     environment["COLORTERM"] = "truecolor"
+    terminalView.terminal.changeHistorySize(Self.scrollbackLines)
 
     terminalView.startProcess(
       executable: shell,
@@ -105,24 +110,19 @@ final class TerminalSession: TerminalSessioning {
       }
     }
   }
+
+  private static func sanitizedWorkingDirectory(_ directory: String?) -> String? {
+    directory?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .nilIfEmpty
+  }
 }
 
 private final class TerminalViewportView: NSView {
   private static let hPad: CGFloat = 12
   private static let vPad: CGFloat = 8
 
-  private weak var terminalView: LocalProcessTerminalView?
-  private let lineHeight: CGFloat
-  private var scrollMonitor: Any?
-  private var scrollAccumulator: CGFloat = 0
-
-  init(
-    terminalView: LocalProcessTerminalView,
-    backgroundColor: NSColor,
-    lineHeight: CGFloat
-  ) {
-    self.terminalView = terminalView
-    self.lineHeight = lineHeight
+  init(terminalView: LocalProcessTerminalView, backgroundColor: NSColor) {
     super.init(frame: .zero)
 
     wantsLayer = true
@@ -149,15 +149,6 @@ private final class TerminalViewportView: NSView {
     super.viewDidMoveToWindow()
     guard window != nil else { return }
     configureScrollers()
-    installScrollMonitor()
-  }
-
-  override func removeFromSuperview() {
-    if let monitor = scrollMonitor {
-      NSEvent.removeMonitor(monitor)
-      scrollMonitor = nil
-    }
-    super.removeFromSuperview()
   }
 
   private func configureScrollers() {
@@ -177,41 +168,24 @@ private final class TerminalViewportView: NSView {
       walkSubviews(sub, visitor)
     }
   }
+}
 
-  private func installScrollMonitor() {
-    guard scrollMonitor == nil else { return }
-    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-      self?.handleScroll(event) ?? event
-    }
+private final class TerminalProcessDelegate: NSObject, LocalProcessTerminalViewDelegate {
+  var onCurrentDirectory: ((String?) -> Void)?
+
+  func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+
+  func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+
+  func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+    onCurrentDirectory?(directory)
   }
 
-  private func handleScroll(_ event: NSEvent) -> NSEvent? {
-    guard let terminalView, let window, event.window === window else { return event }
-    let point = terminalView.convert(event.locationInWindow, from: nil)
-    guard terminalView.bounds.contains(point) else { return event }
+  func processTerminated(source: TerminalView, exitCode: Int32?) {}
+}
 
-    if event.phase == .began {
-      scrollAccumulator = 0
-    }
-
-    let delta: CGFloat
-    if event.hasPreciseScrollingDeltas {
-      delta = event.scrollingDeltaY / lineHeight
-    } else {
-      delta = event.scrollingDeltaY * 3
-    }
-
-    scrollAccumulator += delta
-    let lines = Int(scrollAccumulator)
-    if lines != 0 {
-      scrollAccumulator -= CGFloat(lines)
-      if lines > 0 {
-        terminalView.scrollUp(lines: abs(lines))
-      } else {
-        terminalView.scrollDown(lines: abs(lines))
-      }
-    }
-
-    return nil
+extension String {
+  fileprivate var nilIfEmpty: String? {
+    isEmpty ? nil : self
   }
 }
