@@ -22,6 +22,68 @@ struct WorkspaceProfileSnapshot: Codable, Equatable, Identifiable {
 struct WorkspaceWindowSnapshot: Codable, Equatable, Identifiable {
   var id: UUID
   var title: String
+  var selectedPaneID: UUID?
+  var panes: [WorkspacePaneSnapshot]
+
+  init(
+    id: UUID,
+    title: String,
+    selectedPaneID: UUID?,
+    panes: [WorkspacePaneSnapshot]
+  ) {
+    self.id = id
+    self.title = title
+    self.selectedPaneID = selectedPaneID
+    self.panes = panes
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    title = try container.decode(String.self, forKey: .title)
+
+    if let panes = try container.decodeIfPresent([WorkspacePaneSnapshot].self, forKey: .panes) {
+      self.panes = panes
+      selectedPaneID =
+        try container.decodeIfPresent(UUID.self, forKey: .selectedPaneID) ?? panes.first?.id
+      return
+    }
+
+    let tabs = try container.decodeIfPresent([TerminalTabSnapshot].self, forKey: .tabs) ?? []
+    let paneID = UUID()
+    panes =
+      tabs.isEmpty
+      ? []
+      : [
+        .init(
+          id: paneID,
+          selectedTabID: try container.decodeIfPresent(UUID.self, forKey: .selectedTabID),
+          tabs: tabs
+        )
+      ]
+    selectedPaneID = panes.first?.id
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(title, forKey: .title)
+    try container.encode(selectedPaneID, forKey: .selectedPaneID)
+    try container.encode(panes, forKey: .panes)
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case title
+    case selectedPaneID
+    case panes
+    case selectedTabID
+    case tabs
+  }
+}
+
+struct WorkspacePaneSnapshot: Codable, Equatable, Identifiable {
+  var id: UUID
   var selectedTabID: UUID?
   var tabs: [TerminalTabSnapshot]
 }
@@ -96,28 +158,20 @@ final class TerminalTab: Identifiable {
 
 @Observable
 @MainActor
-final class WorkspaceWindow: Identifiable {
+final class WorkspacePane: Identifiable {
   let id: UUID
-  var title: String
   var selectedTabID: UUID?
   var tabs: [TerminalTab]
 
-  init(
-    id: UUID,
-    title: String,
-    selectedTabID: UUID?,
-    tabs: [TerminalTab]
-  ) {
+  init(id: UUID, selectedTabID: UUID?, tabs: [TerminalTab]) {
     self.id = id
-    self.title = title
     self.selectedTabID = selectedTabID ?? tabs.first?.id
     self.tabs = tabs
   }
 
-  convenience init(snapshot: WorkspaceWindowSnapshot, tabs: [TerminalTab]) {
+  convenience init(snapshot: WorkspacePaneSnapshot, tabs: [TerminalTab]) {
     self.init(
       id: snapshot.id,
-      title: snapshot.title,
       selectedTabID: snapshot.selectedTabID,
       tabs: tabs
     )
@@ -127,12 +181,62 @@ final class WorkspaceWindow: Identifiable {
     tabs.first { $0.id == selectedTabID } ?? tabs.first
   }
 
+  var snapshot: WorkspacePaneSnapshot {
+    .init(
+      id: id,
+      selectedTabID: selectedTab?.id,
+      tabs: tabs.map(\.snapshot)
+    )
+  }
+}
+
+@Observable
+@MainActor
+final class WorkspaceWindow: Identifiable {
+  let id: UUID
+  var title: String
+  var selectedPaneID: UUID?
+  var panes: [WorkspacePane]
+
+  init(
+    id: UUID,
+    title: String,
+    selectedPaneID: UUID?,
+    panes: [WorkspacePane]
+  ) {
+    self.id = id
+    self.title = title
+    self.selectedPaneID = selectedPaneID ?? panes.first?.id
+    self.panes = panes
+  }
+
+  convenience init(snapshot: WorkspaceWindowSnapshot, panes: [WorkspacePane]) {
+    self.init(
+      id: snapshot.id,
+      title: snapshot.title,
+      selectedPaneID: snapshot.selectedPaneID,
+      panes: panes
+    )
+  }
+
+  var selectedPane: WorkspacePane? {
+    panes.first { $0.id == selectedPaneID } ?? panes.first
+  }
+
+  var selectedTab: TerminalTab? {
+    selectedPane?.selectedTab
+  }
+
+  var tabCount: Int {
+    panes.reduce(into: 0) { $0 += $1.tabs.count }
+  }
+
   var snapshot: WorkspaceWindowSnapshot {
     .init(
       id: id,
       title: title,
-      selectedTabID: selectedTab?.id,
-      tabs: tabs.map(\.snapshot)
+      selectedPaneID: selectedPane?.id,
+      panes: panes.map(\.snapshot)
     )
   }
 }

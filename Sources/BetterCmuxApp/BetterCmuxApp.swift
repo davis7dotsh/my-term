@@ -21,6 +21,12 @@ struct BetterCmuxApp: App {
         }
         .keyboardShortcut("n", modifiers: .command)
 
+        Button("Split Window") {
+          model.splitSelectedWindow()
+        }
+        .keyboardShortcut("d", modifiers: .command)
+        .disabled((model.selectedWindow?.panes.count ?? 0) >= 2)
+
         Button("New Tab") {
           model.addTab()
         }
@@ -30,7 +36,7 @@ struct BetterCmuxApp: App {
           model.closeSelectedTab()
         }
         .keyboardShortcut("w", modifiers: .command)
-        .disabled((model.selectedWindow?.tabs.count ?? 0) <= 1)
+        .disabled(model.selectedWindow?.selectedPane == nil)
       }
 
       CommandMenu("Windows") {
@@ -47,10 +53,12 @@ struct BetterCmuxApp: App {
           model.cycleSelectedTab()
         }
         .keyboardShortcut(.tab, modifiers: .control)
-        .disabled((model.selectedWindow?.tabs.count ?? 0) <= 1)
+        .disabled((model.selectedWindow?.selectedPane?.tabs.count ?? 0) <= 1)
 
-        ForEach(Array((model.selectedWindow?.tabs ?? []).prefix(9).enumerated()), id: \.element.id)
-        {
+        ForEach(
+          Array((model.selectedWindow?.selectedPane?.tabs ?? []).prefix(9).enumerated()),
+          id: \.element.id
+        ) {
           index,
           tab in
           Button(tab.title) {

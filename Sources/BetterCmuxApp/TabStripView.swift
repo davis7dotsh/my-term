@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TabStripView: View {
   let window: WorkspaceWindow
+  let pane: WorkspacePane
   let model: WindowStore
   @State private var renameDraft = ""
   @State private var renamingTab: TerminalTab?
@@ -9,17 +10,17 @@ struct TabStripView: View {
   var body: some View {
     ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: 2) {
-        ForEach(window.tabs) { tab in
+        ForEach(pane.tabs) { tab in
           TabChip(
             tab: tab,
-            isSelected: window.selectedTab?.id == tab.id,
-            canClose: window.tabs.count > 1,
-            onSelect: { model.selectTab(windowID: window.id, tabID: tab.id) },
+            isSelected: pane.selectedTab?.id == tab.id,
+            canClose: true,
+            onSelect: { model.selectTab(windowID: window.id, paneID: pane.id, tabID: tab.id) },
             onRename: {
               renameDraft = tab.title
               renamingTab = tab
             },
-            onClose: { model.closeTab(windowID: window.id, tabID: tab.id) }
+            onClose: { model.closeTab(windowID: window.id, paneID: pane.id, tabID: tab.id) }
           )
         }
       }
@@ -38,6 +39,10 @@ struct TabStripView: View {
         .fill(.white.opacity(0.06))
         .frame(height: 1)
     }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      model.selectPane(windowID: window.id, paneID: pane.id)
+    }
     .sheet(item: $renamingTab) { tab in
       RenameSheet(
         title: "Rename Tab",
@@ -45,7 +50,7 @@ struct TabStripView: View {
         value: renameDraft,
         onCancel: { renamingTab = nil },
         onSave: { title in
-          model.renameTab(windowID: window.id, tabID: tab.id, to: title)
+          model.renameTab(windowID: window.id, paneID: pane.id, tabID: tab.id, to: title)
           renamingTab = nil
         }
       )

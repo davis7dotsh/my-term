@@ -8,15 +8,23 @@ struct WindowStoreTests {
   @Test
   func restoresWorkspaceSelectionAndProfiles() throws {
     let selectedTabID = UUID()
+    let paneID = UUID()
+    let windowID = UUID()
     let profileID = UUID()
     let workspace = AppSnapshot(
-      selectedWindowID: UUID(),
+      selectedWindowID: windowID,
       windows: [
         .init(
-          id: UUID(),
+          id: windowID,
           title: "Design",
-          selectedTabID: selectedTabID,
-          tabs: [.init(id: selectedTabID, title: "ui", workingDirectory: "/tmp/design")]
+          selectedPaneID: paneID,
+          panes: [
+            .init(
+              id: paneID,
+              selectedTabID: selectedTabID,
+              tabs: [.init(id: selectedTabID, title: "ui", workingDirectory: "/tmp/design")]
+            )
+          ]
         )
       ]
     )
@@ -39,21 +47,95 @@ struct WindowStoreTests {
     )
 
     #expect(store.windows.count == 1)
+    #expect(store.selectedWindow?.selectedPane?.id == paneID)
     #expect(store.selectedWindow?.selectedTab?.id == selectedTabID)
     #expect(store.activeProfileID == profileID)
     #expect(store.activeProfile?.name == "Design")
   }
 
   @Test
+  func splitWindowCreatesSecondPane() throws {
+    let sessionFactory = MutableStubSessionFactory()
+    let store = WindowStore(
+      persistence: .init(load: { nil }, save: { _ in }),
+      sessionFactory: sessionFactory.makeSession,
+      metadataRefreshInterval: 60,
+      autosaveInterval: 60
+    )
+
+    let originalPaneID = try #require(store.selectedWindow?.selectedPane?.id)
+    let originalTabID = try #require(store.selectedWindow?.selectedPane?.selectedTab?.id)
+
+    store.splitSelectedWindow()
+
+    let window = try #require(store.selectedWindow)
+    #expect(window.panes.count == 2)
+    #expect(window.selectedPane?.id != originalPaneID)
+    #expect(window.panes.first(where: { $0.id == originalPaneID })?.tabs.first?.id == originalTabID)
+    #expect(window.selectedPane?.tabs.count == 1)
+  }
+
+  @Test
+  func closingLastTabInSplitPaneReturnsWindowToSinglePane() throws {
+    let sessionFactory = MutableStubSessionFactory()
+    let store = WindowStore(
+      persistence: .init(load: { nil }, save: { _ in }),
+      sessionFactory: sessionFactory.makeSession,
+      metadataRefreshInterval: 60,
+      autosaveInterval: 60
+    )
+
+    let originalPaneID = try #require(store.selectedWindow?.selectedPane?.id)
+    store.splitSelectedWindow()
+    let splitPaneID = try #require(store.selectedWindow?.selectedPane?.id)
+
+    let splitTabID = try #require(store.selectedWindow?.selectedPane?.selectedTab?.id)
+    let windowID = try #require(store.selectedWindow?.id)
+    store.closeTab(windowID: windowID, paneID: splitPaneID, tabID: splitTabID)
+
+    let window = try #require(store.selectedWindow)
+    #expect(window.panes.count == 1)
+    #expect(window.selectedPane?.id == originalPaneID)
+    #expect(window.panes.contains(where: { $0.id == splitPaneID }) == false)
+  }
+
+  @Test
+  func closingLastTabInSinglePaneRemovesWindow() throws {
+    let sessionFactory = MutableStubSessionFactory()
+    let store = WindowStore(
+      persistence: .init(load: { nil }, save: { _ in }),
+      sessionFactory: sessionFactory.makeSession,
+      metadataRefreshInterval: 60,
+      autosaveInterval: 60
+    )
+
+    let windowID = try #require(store.selectedWindow?.id)
+    let paneID = try #require(store.selectedWindow?.selectedPane?.id)
+    let tabID = try #require(store.selectedWindow?.selectedTab?.id)
+
+    store.closeTab(windowID: windowID, paneID: paneID, tabID: tabID)
+
+    #expect(store.windows.isEmpty)
+    #expect(store.selectedWindow == nil)
+  }
+
+  @Test
   func savingAndActivatingProfilesRestoresWorkspace() throws {
+    let alternatePaneID = UUID()
     let alternateWorkspace = AppSnapshot(
       selectedWindowID: UUID(),
       windows: [
         .init(
           id: UUID(),
           title: "Infra",
-          selectedTabID: UUID(),
-          tabs: [.init(id: UUID(), title: "deploy", workingDirectory: "/tmp/infra")]
+          selectedPaneID: alternatePaneID,
+          panes: [
+            .init(
+              id: alternatePaneID,
+              selectedTabID: UUID(),
+              tabs: [.init(id: UUID(), title: "deploy", workingDirectory: "/tmp/infra")]
+            )
+          ]
         )
       ]
     )
@@ -107,13 +189,13 @@ struct WindowStoreTests {
 
     let persisted = try #require(savedStates.last)
     let workingDirectory = try #require(
-      persisted.currentWorkspace.windows.first?.tabs.first?.workingDirectory
+      persisted.currentWorkspace.windows.first?.panes.first?.tabs.first?.workingDirectory
     )
     let tabTitle = try #require(
-      persisted.currentWorkspace.windows.first?.tabs.first?.title
+      persisted.currentWorkspace.windows.first?.panes.first?.tabs.first?.title
     )
     let profileDirectory = try #require(
-      persisted.profiles.first?.workspace.windows.first?.tabs.first?.workingDirectory
+      persisted.profiles.first?.workspace.windows.first?.panes.first?.tabs.first?.workingDirectory
     )
 
     #expect(workingDirectory == "/tmp/ops")
@@ -132,8 +214,9 @@ struct WindowStoreTests {
     )
 
     let windowID = try #require(store.selectedWindow?.id)
+    let paneID = try #require(store.selectedWindow?.selectedPane?.id)
     let tabID = try #require(store.selectedWindow?.selectedTab?.id)
-    store.renameTab(windowID: windowID, tabID: tabID, to: "server")
+    store.renameTab(windowID: windowID, paneID: paneID, tabID: tabID, to: "server")
 
     let session = try #require(sessionFactory.session(for: tabID))
     session.currentWorkingDirectory = "/tmp/ops"
@@ -171,7 +254,9 @@ private final class MutableStubSessionFactory {
 
   func makeSession(snapshot: TerminalTabSnapshot) -> any TerminalSessioning {
     let session = MutableStubSession(
-      id: snapshot.id, currentWorkingDirectory: snapshot.workingDirectory)
+      id: snapshot.id,
+      currentWorkingDirectory: snapshot.workingDirectory
+    )
     sessions[snapshot.id] = session
     return session
   }

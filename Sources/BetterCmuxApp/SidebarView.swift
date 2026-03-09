@@ -254,7 +254,7 @@ private struct SidebarWindowRow: View {
   }
 
   private var subtitle: String {
-    let tabCount = "\(window.tabs.count) \(window.tabs.count == 1 ? "tab" : "tabs")"
+    let tabCount = "\(window.tabCount) \(window.tabCount == 1 ? "tab" : "tabs")"
     guard let workingDirectory = window.selectedTab?.workingDirectory else { return tabCount }
     return "\(Self.displayPath(for: workingDirectory)) • \(tabCount)"
   }

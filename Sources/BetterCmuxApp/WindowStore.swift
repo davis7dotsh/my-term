@@ -83,19 +83,15 @@ final class WindowStore {
 
   func removeWindow(_ windowID: UUID) {
     guard let index = windows.firstIndex(where: { $0.id == windowID }) else { return }
-
-    if windows.count == 1 {
-      let replacement = Self.seedWorkspaceSnapshot()
-      replaceWorkspace(with: replacement)
-      persist()
-      return
-    }
-
     windows.remove(at: index)
 
     if selectedWindowID == windowID {
-      let fallbackIndex = min(index, windows.count - 1)
-      selectedWindowID = windows[safe: fallbackIndex]?.id
+      if windows.isEmpty {
+        selectedWindowID = nil
+      } else {
+        let fallbackIndex = min(index, windows.count - 1)
+        selectedWindowID = windows[safe: fallbackIndex]?.id
+      }
     }
 
     persist()
@@ -119,81 +115,143 @@ final class WindowStore {
     selectWindow(window.id)
   }
 
-  func addTab(to windowID: UUID? = nil) {
-    guard let window = resolvedWindow(windowID) else { return }
+  func selectPane(windowID: UUID, paneID: UUID) {
+    guard let window = windows.first(where: { $0.id == windowID }),
+      window.panes.contains(where: { $0.id == paneID })
+    else { return }
+
+    window.selectedPaneID = paneID
+    persist()
+  }
+
+  func splitSelectedWindow() {
+    guard let window = selectedWindow, window.panes.count == 1 else { return }
 
     let workingDirectory =
-      window.selectedTab?.session.currentWorkingDirectory
-      ?? window.selectedTab?.workingDirectory
+      window.selectedPane?.selectedTab?.session.currentWorkingDirectory
+      ?? window.selectedPane?.selectedTab?.workingDirectory
+      ?? Self.homeDirectory
+    let snapshot = Self.seedPaneSnapshot(index: 1, workingDirectory: workingDirectory)
+    let pane = Self.makePane(from: snapshot, sessionFactory: makeSession)
+
+    window.panes.append(pane)
+    window.selectedPaneID = pane.id
+    persist()
+  }
+
+  func closePane(windowID: UUID, paneID: UUID) {
+    guard let window = windows.first(where: { $0.id == windowID }),
+      let paneIndex = window.panes.firstIndex(where: { $0.id == paneID }),
+      window.panes.count > 1
+    else { return }
+
+    window.panes.remove(at: paneIndex)
+    let fallbackIndex = min(paneIndex, window.panes.count - 1)
+    window.selectedPaneID = window.panes[safe: fallbackIndex]?.id ?? window.panes.first?.id
+    persist()
+  }
+
+  func addTab(to windowID: UUID? = nil, paneID: UUID? = nil) {
+    guard let window = resolvedWindow(windowID),
+      let pane = resolvedPane(in: window, paneID: paneID)
+    else { return }
+
+    let workingDirectory =
+      pane.selectedTab?.session.currentWorkingDirectory
+      ?? pane.selectedTab?.workingDirectory
       ?? Self.homeDirectory
     let snapshot = TerminalTabSnapshot(
       id: UUID(),
-      title: Self.defaultTabTitle(index: window.tabs.count + 1, workingDirectory: workingDirectory),
+      title: Self.defaultTabTitle(index: pane.tabs.count + 1, workingDirectory: workingDirectory),
       workingDirectory: workingDirectory
     )
 
     let tab = TerminalTab(snapshot: snapshot, session: makeSession(snapshot))
-    window.tabs.append(tab)
-    window.selectedTabID = tab.id
+    pane.tabs.append(tab)
+    pane.selectedTabID = tab.id
+    window.selectedPaneID = pane.id
     persist()
   }
 
-  func closeTab(windowID: UUID, tabID: UUID) {
+  func closeTab(windowID: UUID, paneID: UUID, tabID: UUID) {
     guard let window = windows.first(where: { $0.id == windowID }),
-      let tabIndex = window.tabs.firstIndex(where: { $0.id == tabID }),
-      window.tabs.count > 1
+      let pane = window.panes.first(where: { $0.id == paneID }),
+      let tabIndex = pane.tabs.firstIndex(where: { $0.id == tabID })
     else { return }
 
-    window.tabs.remove(at: tabIndex)
-    window.selectedTabID = window.tabs[safe: max(0, tabIndex - 1)]?.id ?? window.tabs.first?.id
+    if pane.tabs.count == 1 {
+      if window.panes.count > 1 {
+        closePane(windowID: windowID, paneID: paneID)
+      } else {
+        removeWindow(windowID)
+      }
+      return
+    }
+
+    pane.tabs.remove(at: tabIndex)
+    pane.selectedTabID = pane.tabs[safe: max(0, tabIndex - 1)]?.id ?? pane.tabs.first?.id
+    window.selectedPaneID = pane.id
     persist()
   }
 
   func closeSelectedTab() {
-    guard let window = selectedWindow, let tabID = window.selectedTab?.id else { return }
-    closeTab(windowID: window.id, tabID: tabID)
-  }
-
-  func selectTab(windowID: UUID, tabID: UUID) {
-    guard let window = windows.first(where: { $0.id == windowID }),
-      window.tabs.contains(where: { $0.id == tabID })
+    guard let window = selectedWindow,
+      let pane = window.selectedPane,
+      let tabID = pane.selectedTab?.id
     else { return }
 
-    window.selectedTabID = tabID
+    closeTab(windowID: window.id, paneID: pane.id, tabID: tabID)
+  }
+
+  func selectTab(windowID: UUID, paneID: UUID, tabID: UUID) {
+    guard let window = windows.first(where: { $0.id == windowID }),
+      let pane = window.panes.first(where: { $0.id == paneID }),
+      pane.tabs.contains(where: { $0.id == tabID })
+    else { return }
+
+    window.selectedPaneID = paneID
+    pane.selectedTabID = tabID
     persist()
   }
 
   func selectTab(at index: Int, in windowID: UUID? = nil) {
-    guard let window = resolvedWindow(windowID), let tab = window.tabs[safe: index] else { return }
-    selectTab(windowID: window.id, tabID: tab.id)
+    guard let window = resolvedWindow(windowID),
+      let pane = window.selectedPane,
+      let tab = pane.tabs[safe: index]
+    else { return }
+
+    selectTab(windowID: window.id, paneID: pane.id, tabID: tab.id)
   }
 
   func cycleSelectedTab(forward: Bool = true) {
     guard let window = selectedWindow,
-      let selectedTabID = window.selectedTab?.id,
-      let currentIndex = window.tabs.firstIndex(where: { $0.id == selectedTabID }),
-      !window.tabs.isEmpty
+      let pane = window.selectedPane,
+      let selectedTabID = pane.selectedTab?.id,
+      let currentIndex = pane.tabs.firstIndex(where: { $0.id == selectedTabID }),
+      !pane.tabs.isEmpty
     else { return }
 
     let nextIndex =
       if forward {
-        (currentIndex + 1) % window.tabs.count
+        (currentIndex + 1) % pane.tabs.count
       } else {
-        (currentIndex - 1 + window.tabs.count) % window.tabs.count
+        (currentIndex - 1 + pane.tabs.count) % pane.tabs.count
       }
 
-    selectTab(windowID: window.id, tabID: window.tabs[nextIndex].id)
+    selectTab(windowID: window.id, paneID: pane.id, tabID: pane.tabs[nextIndex].id)
   }
 
-  func renameTab(windowID: UUID, tabID: UUID, to title: String) {
+  func renameTab(windowID: UUID, paneID: UUID, tabID: UUID, to title: String) {
     guard let window = windows.first(where: { $0.id == windowID }),
-      let tab = window.tabs.first(where: { $0.id == tabID })
+      let pane = window.panes.first(where: { $0.id == paneID }),
+      let tab = pane.tabs.first(where: { $0.id == tabID })
     else { return }
 
     let sanitized = Self.sanitizedTitle(title, fallback: "Tab")
     guard tab.title != sanitized else { return }
     tab.title = sanitized
     tab.hasCustomTitle = true
+    window.selectedPaneID = pane.id
     persist()
   }
 
@@ -252,6 +310,14 @@ final class WindowStore {
     }
 
     return selectedWindow
+  }
+
+  private func resolvedPane(in window: WorkspaceWindow, paneID: UUID?) -> WorkspacePane? {
+    if let paneID {
+      return window.panes.first { $0.id == paneID }
+    }
+
+    return window.selectedPane
   }
 
   private func replaceWorkspace(with snapshot: AppSnapshot) {
@@ -345,17 +411,22 @@ final class WindowStore {
 
   private func refreshVisibleTabMetadata() {
     guard let selectedWindow else { return }
-    syncTabMetadata(in: selectedWindow)
+
+    for pane in selectedWindow.panes {
+      syncTabMetadata(in: pane)
+    }
   }
 
   private func syncAllTabMetadata() {
     for window in windows {
-      syncTabMetadata(in: window)
+      for pane in window.panes {
+        syncTabMetadata(in: pane)
+      }
     }
   }
 
-  private func syncTabMetadata(in window: WorkspaceWindow) {
-    for (index, tab) in window.tabs.enumerated() {
+  private func syncTabMetadata(in pane: WorkspacePane) {
+    for (index, tab) in pane.tabs.enumerated() {
       let workingDirectory =
         tab.session.currentWorkingDirectory?
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -387,8 +458,16 @@ final class WindowStore {
     from snapshot: WorkspaceWindowSnapshot,
     sessionFactory: SessionFactory
   ) -> WorkspaceWindow {
+    let panes = snapshot.panes.map { makePane(from: $0, sessionFactory: sessionFactory) }
+    return WorkspaceWindow(snapshot: snapshot, panes: panes)
+  }
+
+  private static func makePane(
+    from snapshot: WorkspacePaneSnapshot,
+    sessionFactory: SessionFactory
+  ) -> WorkspacePane {
     let tabs = snapshot.tabs.map { TerminalTab(snapshot: $0, session: sessionFactory($0)) }
-    return WorkspaceWindow(snapshot: snapshot, tabs: tabs)
+    return WorkspacePane(snapshot: snapshot, tabs: tabs)
   }
 
   private static func resolvedSelectedWindowID(
@@ -403,7 +482,6 @@ final class WindowStore {
   private static func sanitizedAppSnapshot(_ snapshot: AppSnapshot?) -> AppSnapshot? {
     guard let snapshot else { return nil }
     let windows = snapshot.windows.compactMap(sanitizedWindowSnapshot)
-    guard !windows.isEmpty else { return nil }
 
     return .init(
       selectedWindowID: snapshot.selectedWindowID,
@@ -426,12 +504,25 @@ final class WindowStore {
   private static func sanitizedWindowSnapshot(_ snapshot: WorkspaceWindowSnapshot)
     -> WorkspaceWindowSnapshot?
   {
+    let panes = snapshot.panes.compactMap(sanitizedPaneSnapshot)
+    guard !panes.isEmpty else { return nil }
+
+    return .init(
+      id: snapshot.id,
+      title: sanitizedTitle(snapshot.title, fallback: "Window"),
+      selectedPaneID: snapshot.selectedPaneID,
+      panes: panes
+    )
+  }
+
+  private static func sanitizedPaneSnapshot(_ snapshot: WorkspacePaneSnapshot)
+    -> WorkspacePaneSnapshot?
+  {
     let tabs = snapshot.tabs.compactMap(sanitizedTabSnapshot)
     guard !tabs.isEmpty else { return nil }
 
     return .init(
       id: snapshot.id,
-      title: sanitizedTitle(snapshot.title, fallback: "Window"),
       selectedTabID: snapshot.selectedTabID,
       tabs: tabs
     )
@@ -465,15 +556,27 @@ final class WindowStore {
   private static func seedWindowSnapshot(index: Int, workingDirectory: String)
     -> WorkspaceWindowSnapshot
   {
+    let pane = seedPaneSnapshot(index: 1, workingDirectory: workingDirectory)
+
+    return .init(
+      id: UUID(),
+      title: "Window \(index)",
+      selectedPaneID: pane.id,
+      panes: [pane]
+    )
+  }
+
+  private static func seedPaneSnapshot(index: Int, workingDirectory: String)
+    -> WorkspacePaneSnapshot
+  {
     let tab = TerminalTabSnapshot(
       id: UUID(),
-      title: defaultTabTitle(index: 1, workingDirectory: workingDirectory),
+      title: defaultTabTitle(index: index, workingDirectory: workingDirectory),
       workingDirectory: workingDirectory
     )
 
     return .init(
       id: UUID(),
-      title: "Window \(index)",
       selectedTabID: tab.id,
       tabs: [tab]
     )
