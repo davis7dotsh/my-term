@@ -153,6 +153,11 @@ private final class TerminalViewportView: NSView {
     }
   }
 
+  @MainActor
+  deinit {
+    removeScrollMonitor()
+  }
+
   @available(*, unavailable)
   required init?(coder: NSCoder) {
     fatalError("init(coder:) has not been implemented")
