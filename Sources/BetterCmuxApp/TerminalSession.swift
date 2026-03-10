@@ -15,7 +15,7 @@ final class TerminalSession: TerminalSessioning {
   let id: UUID
   let hostView: NSView
 
-  private let terminalView: LocalProcessTerminalView
+  private let terminalView: BetterTerminalView
   private let processDelegate: TerminalProcessDelegate
   private let workingDirectory: String
   private var reportedWorkingDirectory: String?
@@ -44,9 +44,10 @@ final class TerminalSession: TerminalSessioning {
       NSFont(name: "Berkeley Mono", size: 15)
       ?? NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
 
-    let terminal = LocalProcessTerminalView(frame: .zero)
+    let terminal = BetterTerminalView(frame: .zero)
     let processDelegate = TerminalProcessDelegate()
     terminal.autoresizingMask = [.width, .height]
+    terminal.disableFullRedrawOnAnyChanges = false
     terminal.font = font
     terminal.nativeForegroundColor = Self.fgColor
     terminal.nativeBackgroundColor = Self.bgColor
@@ -121,12 +122,20 @@ final class TerminalSession: TerminalSessioning {
 private final class TerminalViewportView: NSView {
   private static let hPad: CGFloat = 12
   private static let vPad: CGFloat = 8
+  private static let trackpadPointsPerLine: CGFloat = 12
+  private let terminalView: BetterTerminalView
+  private var scrollMonitor: Any?
+  private var pendingScrollDelta: CGFloat = 0
 
-  init(terminalView: LocalProcessTerminalView, backgroundColor: NSColor) {
+  init(terminalView: BetterTerminalView, backgroundColor: NSColor) {
+    self.terminalView = terminalView
     super.init(frame: .zero)
 
     wantsLayer = true
     layer?.backgroundColor = backgroundColor.cgColor
+    if #available(macOS 14, *) {
+      clipsToBounds = true
+    }
 
     let tv = terminalView as NSView
     tv.translatesAutoresizingMaskIntoConstraints = false
@@ -138,6 +147,15 @@ private final class TerminalViewportView: NSView {
       tv.topAnchor.constraint(equalTo: topAnchor, constant: Self.vPad),
       tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.vPad),
     ])
+
+    terminalView.onViewportChange = { [weak self] in
+      self?.updateScrollerVisibility()
+    }
+  }
+
+  @MainActor
+  deinit {
+    removeScrollMonitor()
   }
 
   @available(*, unavailable)
@@ -147,26 +165,183 @@ private final class TerminalViewportView: NSView {
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    guard window != nil else { return }
-    configureScrollers()
+    guard window != nil else {
+      removeScrollMonitor()
+      return
+    }
+    configureContainingScrollView()
+    configureTerminalScroller()
+    installScrollMonitor()
   }
 
-  private func configureScrollers() {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-      guard let self else { return }
-      self.walkSubviews(self) { view in
-        guard let scroller = view as? NSScroller else { return }
-        scroller.scrollerStyle = .overlay
-        scroller.knobStyle = .light
+  override func viewWillMove(toWindow newWindow: NSWindow?) {
+    super.viewWillMove(toWindow: newWindow)
+    guard newWindow == nil else { return }
+    removeScrollMonitor()
+  }
+
+  private func configureContainingScrollView() {
+    DispatchQueue.main.async { [weak self] in
+      guard let scrollView = self?.enclosingScrollView else { return }
+      scrollView.hasVerticalScroller = false
+      scrollView.hasHorizontalScroller = false
+      scrollView.autohidesScrollers = true
+      scrollView.drawsBackground = false
+      scrollView.verticalScrollElasticity = .none
+      scrollView.horizontalScrollElasticity = .none
+    }
+  }
+
+  private func configureTerminalScroller() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self, let scroller = self.terminalScroller else { return }
+      scroller.scrollerStyle = .legacy
+      scroller.knobStyle = .light
+      scroller.controlSize = .small
+      self.updateScrollerVisibility()
+    }
+  }
+
+  private func updateScrollerVisibility() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self, let scroller = self.terminalScroller else { return }
+      scroller.isHidden = !self.terminalView.canScroll
+      scroller.alphaValue = self.terminalView.canScroll ? 0.9 : 0
+    }
+  }
+
+  private var terminalScroller: NSScroller? {
+    walkSubviews(terminalView).compactMap { $0 as? NSScroller }.first
+  }
+
+  private func walkSubviews(_ root: NSView) -> [NSView] {
+    root.subviews.flatMap { [$0] + walkSubviews($0) }
+  }
+
+  private func installScrollMonitor() {
+    guard scrollMonitor == nil else { return }
+    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+      guard let self else { return event }
+      guard event.window === self.window else { return event }
+
+      let point = self.convert(event.locationInWindow, from: nil)
+      guard self.bounds.contains(point) else { return event }
+
+      self.handleScroll(event)
+      return nil
+    }
+  }
+
+  private func removeScrollMonitor() {
+    guard let scrollMonitor else { return }
+    NSEvent.removeMonitor(scrollMonitor)
+    self.scrollMonitor = nil
+  }
+
+  private func handleScroll(_ event: NSEvent) {
+    let delta = event.scrollingDeltaY
+    guard delta != 0 else { return }
+
+    if event.phase == .began || event.momentumPhase == .began {
+      pendingScrollDelta = 0
+    }
+
+    let lines = resolvedScrollLines(for: event)
+    guard lines > 0 else { return }
+
+    if terminalView.canScroll {
+      if delta > 0 {
+        terminalView.scrollUp(lines: lines)
+      } else {
+        terminalView.scrollDown(lines: lines)
       }
+      return
+    }
+
+    guard terminalView.allowMouseReporting, terminalView.terminal.mouseMode != .off else { return }
+    sendMouseWheelEvent(lines: lines, delta: delta, event: event)
+  }
+
+  private func resolvedScrollLines(for event: NSEvent) -> Int {
+    if event.hasPreciseScrollingDeltas {
+      pendingScrollDelta += event.scrollingDeltaY
+      let lines = Int(abs(pendingScrollDelta) / Self.trackpadPointsPerLine)
+      guard lines > 0 else { return 0 }
+
+      let direction: CGFloat = pendingScrollDelta > 0 ? 1 : -1
+      let consumed = CGFloat(lines) * Self.trackpadPointsPerLine * direction
+      pendingScrollDelta -= consumed
+      return lines
+    }
+
+    pendingScrollDelta = 0
+    return max(Int(abs(event.scrollingDeltaY.rounded(.towardZero))), 1)
+  }
+
+  private func sendMouseWheelEvent(lines: Int, delta: CGFloat, event: NSEvent) {
+    let (cols, rows) = terminalView.terminal.getDims()
+    guard cols > 0, rows > 0 else { return }
+
+    let point = terminalView.convert(event.locationInWindow, from: nil)
+    let scrollerWidth = terminalScroller?.frame.width ?? 0
+    let contentWidth = max(terminalView.bounds.width - scrollerWidth, 1)
+    let cellWidth = contentWidth / CGFloat(cols)
+    let cellHeight = max(terminalView.bounds.height / CGFloat(rows), 1)
+
+    let col = min(max(Int(point.x / cellWidth), 0), cols - 1)
+    let row = min(max(Int((terminalView.bounds.height - point.y) / cellHeight), 0), rows - 1)
+    let pixelX = min(max(Int(point.x.rounded(.towardZero)), 0), Int(terminalView.bounds.width))
+    let pixelY = min(
+      max(Int((terminalView.bounds.height - point.y).rounded(.towardZero)), 0),
+      Int(terminalView.bounds.height)
+    )
+    let baseButton = delta > 0 ? 64 : 65
+    let buttonFlags = baseButton + mouseModifierFlags(for: event)
+
+    for _ in 0..<lines {
+      terminalView.terminal.sendEvent(
+        buttonFlags: buttonFlags,
+        x: col,
+        y: row,
+        pixelX: pixelX,
+        pixelY: pixelY
+      )
     }
   }
 
-  private func walkSubviews(_ root: NSView, _ visitor: (NSView) -> Void) {
-    for sub in root.subviews {
-      visitor(sub)
-      walkSubviews(sub, visitor)
+  private func mouseModifierFlags(for event: NSEvent) -> Int {
+    guard terminalView.terminal.mouseMode.sendsModifiers() else { return 0 }
+
+    var flags = 0
+    if event.modifierFlags.contains(.shift) {
+      flags += 4
     }
+    if event.modifierFlags.contains(.option) {
+      flags += 8
+    }
+    if event.modifierFlags.contains(.control) {
+      flags += 16
+    }
+    return flags
+  }
+}
+
+private final class BetterTerminalView: LocalProcessTerminalView {
+  var onViewportChange: (() -> Void)?
+
+  override func bufferActivated(source: Terminal) {
+    super.bufferActivated(source: source)
+    onViewportChange?()
+  }
+
+  override func scrolled(source: TerminalView, position: Double) {
+    super.scrolled(source: source, position: position)
+    onViewportChange?()
+  }
+
+  override func setFrameSize(_ newSize: NSSize) {
+    super.setFrameSize(newSize)
+    onViewportChange?()
   }
 }
 
