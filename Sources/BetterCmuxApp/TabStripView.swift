@@ -9,70 +9,62 @@ struct TabStripView: View {
   @State private var renamingTab: TerminalTab?
 
   var body: some View {
-    HStack(spacing: 8) {
-      tabPicker
-        .frame(maxWidth: pickerWidth, alignment: .leading)
-
-      Spacer(minLength: 0)
-
-      if let selectedTab = pane.selectedTab, pane.tabs.count == 1 {
-        Text(Self.displayPath(for: selectedTab.workingDirectory))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
-
-      Button {
-        model.addTab(to: window.id, paneID: pane.id)
-      } label: {
-        Label("New Tab", systemImage: "plus")
-      }
-      .labelStyle(.iconOnly)
-      .buttonStyle(.borderless)
-
-      Menu {
-        if let selectedTab = pane.selectedTab {
-          Button("Rename Tab…") {
-            renameDraft = selectedTab.title
-            renamingTab = selectedTab
-          }
-
-          Button("Close Tab", role: .destructive) {
-            model.closeTab(windowID: window.id, paneID: pane.id, tabID: selectedTab.id)
+    HStack(spacing: 0) {
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 1) {
+          ForEach(pane.tabs) { tab in
+            TabButton(
+              tab: tab,
+              isSelected: pane.selectedTab?.id == tab.id,
+              canClose: pane.tabs.count > 1,
+              onSelect: {
+                model.selectTab(windowID: window.id, paneID: pane.id, tabID: tab.id)
+              },
+              onClose: {
+                model.closeTab(windowID: window.id, paneID: pane.id, tabID: tab.id)
+              },
+              onRename: {
+                renameDraft = tab.title
+                renamingTab = tab
+              }
+            )
           }
         }
+        .padding(.horizontal, 6)
+      }
+
+      Divider()
+        .padding(.vertical, 7)
+
+      HStack(spacing: 0) {
+        Button {
+          model.addTab(to: window.id, paneID: pane.id)
+        } label: {
+          Image(systemName: "plus")
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help("New Tab")
 
         if window.panes.count > 1 {
-          Divider()
-
-          Button("Close Pane", role: .destructive) {
-            model.closePane(windowID: window.id, paneID: pane.id)
-          }
-        }
-
-        Divider()
-
-        ForEach(pane.tabs) { tab in
-          Button {
-            model.selectTab(windowID: window.id, paneID: pane.id, tabID: tab.id)
-          } label: {
-            if pane.selectedTab?.id == tab.id {
-              Label(tab.title, systemImage: "checkmark")
-            } else {
-              Text(tab.title)
+          Menu {
+            Button("Close Pane", role: .destructive) {
+              model.closePane(windowID: window.id, paneID: pane.id)
             }
+          } label: {
+            Image(systemName: "ellipsis")
+              .frame(width: 24, height: 28)
+              .contentShape(Rectangle())
           }
+          .menuStyle(.borderlessButton)
+          .menuIndicator(.hidden)
+          .fixedSize()
         }
-      } label: {
-        Label("Tab Options", systemImage: "ellipsis.circle")
       }
-      .menuStyle(.borderlessButton)
-      .labelStyle(.iconOnly)
-      .menuIndicator(.hidden)
-      .fixedSize()
+      .padding(.trailing, 4)
     }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 6)
+    .frame(height: 34)
     .controlSize(.small)
     .background(Color(nsColor: .windowBackgroundColor))
     .overlay(alignment: .bottom) {
@@ -95,57 +87,61 @@ struct TabStripView: View {
       )
     }
   }
+}
 
-  @ViewBuilder
-  private var tabPicker: some View {
-    if pane.tabs.count <= 1, let selectedTab = pane.selectedTab {
-      Label(selectedTab.title, systemImage: "terminal")
-        .font(.callout.weight(.medium))
-        .foregroundStyle(.primary)
-        .lineLimit(1)
-    } else if pane.tabs.count <= 4 {
-      Picker("Tab", selection: selectedTabID) {
-        ForEach(pane.tabs) { tab in
-          Text(tab.title)
-            .tag(tab.id)
+private struct TabButton: View {
+  let tab: TerminalTab
+  let isSelected: Bool
+  let canClose: Bool
+  let onSelect: () -> Void
+  let onClose: () -> Void
+  let onRename: () -> Void
+  @State private var isHovering = false
+
+  var body: some View {
+    HStack(spacing: 0) {
+      // Select area
+      Button(action: onSelect) {
+        Text(tab.title)
+          .font(.callout)
+          .lineLimit(1)
+          .fixedSize()
+          .padding(.leading, 9)
+          .padding(.trailing, canClose ? 5 : 9)
+          .frame(height: 26)
+      }
+      .buttonStyle(.plain)
+
+      // Close button — shown on hover or when selected
+      if canClose {
+        Button(action: onClose) {
+          Image(systemName: "xmark")
+            .font(.system(size: 8, weight: .bold))
+            .frame(width: 14, height: 14)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .opacity(isHovering || isSelected ? 1 : 0)
+        .padding(.trailing, 6)
       }
-      .labelsHidden()
-      .pickerStyle(.segmented)
-    } else {
-      Picker("Tab", selection: selectedTabID) {
-        ForEach(pane.tabs) { tab in
-          Text(tab.title)
-            .tag(tab.id)
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
     }
-  }
-
-  private var pickerWidth: CGFloat {
-    if pane.tabs.count <= 1 {
-      return 260
+    .background {
+      RoundedRectangle(cornerRadius: 5)
+        .fill(
+          isSelected
+            ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.18)
+            : isHovering
+              ? Color(nsColor: .quaternaryLabelColor).opacity(0.6)
+              : Color.clear
+        )
     }
-
-    return pane.tabs.count <= 4 ? 320 : 220
-  }
-
-  private var selectedTabID: Binding<UUID> {
-    .init(
-      get: { pane.selectedTab?.id ?? pane.tabs.first?.id ?? UUID() },
-      set: { tabID in
-        model.selectTab(windowID: window.id, paneID: pane.id, tabID: tabID)
+    .onHover { isHovering = $0 }
+    .contextMenu {
+      Button("Rename Tab…") { onRename() }
+      if canClose {
+        Divider()
+        Button("Close Tab", role: .destructive) { onClose() }
       }
-    )
-  }
-
-  private static func displayPath(for path: String) -> String {
-    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
-    guard path.hasPrefix(homeDirectory) else { return path }
-
-    let suffix = path.dropFirst(homeDirectory.count)
-    return suffix.isEmpty ? "~" : "~\(suffix)"
+    }
   }
 }

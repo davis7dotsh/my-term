@@ -9,6 +9,31 @@ struct SidebarView: View {
   var body: some View {
     List(selection: selectedWindowID) {
       Section {
+        ForEach(model.windows) { window in
+          SidebarPaneRow(
+            window: window,
+            canClose: model.windows.count > 1,
+            onRemove: { model.removeWindow(window.id) }
+          )
+          .tag(window.id)
+          .contextMenu {
+            Button("Rename Pane") {
+              draft = window.title
+              sheetMode = .renamePane(window.id)
+            }
+
+            Button("Delete Pane", role: .destructive) {
+              model.removeWindow(window.id)
+            }
+          }
+        }
+      } header: {
+        SidebarSectionHeader(title: "Panes", helpText: "New Pane") {
+          model.addWindow()
+        }
+      }
+
+      Section {
         if model.profiles.isEmpty {
           SidebarHintRow(
             title: "No saved profiles yet",
@@ -39,33 +64,10 @@ struct SidebarView: View {
           }
         }
       } header: {
-        SidebarSectionHeader(title: "Profiles") {
+        SidebarSectionHeader(title: "Profiles", helpText: "Save Current Workspace") {
           draft = model.activeProfile?.name ?? model.nextProfileName
           sheetMode = .saveProfile
         }
-      }
-
-      Section {
-        ForEach(model.windows) { window in
-          SidebarPaneRow(
-            window: window,
-            canClose: model.windows.count > 1,
-            onRemove: { model.removeWindow(window.id) }
-          )
-          .tag(window.id)
-          .contextMenu {
-            Button("Rename Pane") {
-              draft = window.title
-              sheetMode = .renamePane(window.id)
-            }
-
-            Button("Delete Pane", role: .destructive) {
-              model.removeWindow(window.id)
-            }
-          }
-        }
-      } header: {
-        Text("Panes")
       }
     }
     .listStyle(.sidebar)
@@ -107,6 +109,7 @@ struct SidebarView: View {
 
 private struct SidebarSectionHeader: View {
   let title: String
+  let helpText: String
   let onAdd: () -> Void
 
   var body: some View {
@@ -120,7 +123,7 @@ private struct SidebarSectionHeader: View {
       }
       .buttonStyle(.borderless)
       .foregroundStyle(.secondary)
-      .help("Save Current Workspace")
+      .help(helpText)
     }
   }
 }
@@ -189,6 +192,7 @@ private struct SidebarProfileRow: View {
     HStack(spacing: 10) {
       Image(systemName: isActive ? "checkmark.circle.fill" : "square.stack")
         .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+        .frame(width: 16)
 
       VStack(alignment: .leading, spacing: 2) {
         Text(profile.name)
@@ -205,7 +209,10 @@ private struct SidebarProfileRow: View {
       if isActive {
         Text("Live")
           .font(.caption2.weight(.semibold))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(Color.accentColor.opacity(0.8))
+          .padding(.horizontal, 5)
+          .padding(.vertical, 2)
+          .background(Color.accentColor.opacity(0.1), in: Capsule())
       }
     }
     .padding(.vertical, 2)
@@ -223,6 +230,7 @@ private struct SidebarPaneRow: View {
     HStack(spacing: 10) {
       Image(systemName: "terminal")
         .foregroundStyle(.secondary)
+        .frame(width: 16)
 
       VStack(alignment: .leading, spacing: 2) {
         Text(window.title)
@@ -238,21 +246,21 @@ private struct SidebarPaneRow: View {
 
       if canClose {
         Button(action: onRemove) {
-          Image(systemName: isHoveringClose ? "xmark.circle.fill" : "xmark.circle")
-            .foregroundStyle(.secondary)
+          Image(systemName: "xmark.circle.fill")
+            .foregroundStyle(isHoveringClose ? Color.secondary : Color.secondary.opacity(0.4))
         }
         .buttonStyle(.borderless)
-        .opacity(isHoveringClose ? 1 : 0.7)
         .onHover { isHoveringClose = $0 }
       }
     }
     .padding(.vertical, 2)
+    .contentShape(Rectangle())
   }
 
   private var subtitle: String {
     let tabCount = "\(window.tabCount) \(window.tabCount == 1 ? "tab" : "tabs")"
     guard let workingDirectory = window.selectedTab?.workingDirectory else { return tabCount }
-    return "\(Self.displayPath(for: workingDirectory)) • \(tabCount)"
+    return "\(Self.displayPath(for: workingDirectory)) · \(tabCount)"
   }
 
   private static func displayPath(for path: String) -> String {
@@ -285,5 +293,8 @@ private struct SidebarStatusBar: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .background(.bar)
+    .overlay(alignment: .top) {
+      Divider()
+    }
   }
 }

@@ -65,6 +65,12 @@ final class TerminalSession: TerminalSessioning {
       self?.reportedWorkingDirectory = Self.sanitizedWorkingDirectory(directory)
     }
 
+    processDelegate.onProcessTerminated = { [weak self] in
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        self?.launchShell()
+      }
+    }
+
     launchShell()
   }
 
@@ -354,6 +360,7 @@ private final class BetterTerminalView: LocalProcessTerminalView {
 
 private final class TerminalProcessDelegate: NSObject, LocalProcessTerminalViewDelegate {
   var onCurrentDirectory: ((String?) -> Void)?
+  var onProcessTerminated: (() -> Void)?
 
   func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
@@ -363,7 +370,9 @@ private final class TerminalProcessDelegate: NSObject, LocalProcessTerminalViewD
     onCurrentDirectory?(directory)
   }
 
-  func processTerminated(source: TerminalView, exitCode: Int32?) {}
+  func processTerminated(source: TerminalView, exitCode: Int32?) {
+    onProcessTerminated?()
+  }
 }
 
 extension String {
