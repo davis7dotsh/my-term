@@ -7,7 +7,7 @@ struct BetterCmuxApp: App {
   @State private var model = WindowStore()
 
   var body: some Scene {
-    WindowGroup {
+    Window("BetterCmux", id: "main") {
       RootView(model: model)
         .onAppear {
           appDelegate.activateAppIfNeeded()
@@ -15,13 +15,13 @@ struct BetterCmuxApp: App {
     }
     .defaultSize(width: 1480, height: 920)
     .commands {
-      CommandGroup(after: .newItem) {
-        Button("New Window") {
+      CommandGroup(replacing: .newItem) {
+        Button("New Pane") {
           model.addWindow()
         }
         .keyboardShortcut("n", modifiers: .command)
 
-        Button("Split Window") {
+        Button("Split View") {
           model.splitSelectedWindow()
         }
         .keyboardShortcut("d", modifiers: .command)
@@ -39,7 +39,7 @@ struct BetterCmuxApp: App {
         .disabled(model.selectedWindow?.selectedPane == nil)
       }
 
-      CommandMenu("Windows") {
+      CommandMenu("Panes") {
         ForEach(Array(model.windows.prefix(9).enumerated()), id: \.element.id) { index, window in
           Button(window.title) {
             model.selectWindow(at: index)

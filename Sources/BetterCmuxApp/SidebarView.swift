@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import SwiftUI
 
 struct SidebarView: View {
@@ -7,38 +7,70 @@ struct SidebarView: View {
   @State private var sheetMode: SidebarSheetMode?
 
   var body: some View {
-    VStack(spacing: 0) {
-      profileShelf
+    List(selection: selectedWindowID) {
+      Section {
+        if model.profiles.isEmpty {
+          SidebarHintRow(
+            title: "No saved profiles yet",
+            message: "Save the current workspace to switch back to it later."
+          )
+          .listRowSeparator(.hidden)
+        } else {
+          ForEach(model.profiles) { profile in
+            Button {
+              model.activateProfile(profile.id)
+            } label: {
+              SidebarProfileRow(
+                profile: profile,
+                isActive: model.activeProfileID == profile.id
+              )
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+              Button("Rename Profile") {
+                draft = profile.name
+                sheetMode = .renameProfile(profile.id)
+              }
 
-      List(selection: selectedWindowID) {
+              Button("Delete Profile", role: .destructive) {
+                model.deleteProfile(profile.id)
+              }
+            }
+          }
+        }
+      } header: {
+        SidebarSectionHeader(title: "Profiles") {
+          draft = model.activeProfile?.name ?? model.nextProfileName
+          sheetMode = .saveProfile
+        }
+      }
+
+      Section {
         ForEach(model.windows) { window in
-          SidebarWindowRow(
+          SidebarPaneRow(
             window: window,
             canClose: model.windows.count > 1,
             onRemove: { model.removeWindow(window.id) }
           )
           .tag(window.id)
           .contextMenu {
-            Button("Rename Window") {
+            Button("Rename Pane") {
               draft = window.title
-              sheetMode = .renameWindow(window.id)
+              sheetMode = .renamePane(window.id)
             }
 
-            Button("Delete Window", role: .destructive) {
+            Button("Delete Pane", role: .destructive) {
               model.removeWindow(window.id)
             }
           }
         }
+      } header: {
+        Text("Panes")
       }
-      .listStyle(.sidebar)
-      .scrollContentBackground(.hidden)
-      .background {
-        ZStack {
-          ChromeMaterialView()
-          Color.black.opacity(0.18)
-          OverlayScrollerConfigurator()
-        }
-      }
+    }
+    .listStyle(.sidebar)
+    .safeAreaInset(edge: .bottom) {
+      SidebarStatusBar(activeProfile: model.activeProfile)
     }
     .sheet(item: $sheetMode) { mode in
       RenameSheet(
@@ -48,7 +80,7 @@ struct SidebarView: View {
         onCancel: { sheetMode = nil },
         onSave: { value in
           switch mode {
-          case .renameWindow(let windowID):
+          case .renamePane(let windowID):
             model.renameWindow(windowID, to: value)
           case .saveProfile:
             model.saveProfile(named: value)
@@ -59,82 +91,6 @@ struct SidebarView: View {
           sheetMode = nil
         }
       )
-    }
-  }
-
-  private var profileShelf: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        Text("Profiles")
-          .font(.system(size: 12, weight: .semibold))
-          .foregroundStyle(.secondary)
-
-        Spacer()
-
-        Button {
-          draft = model.activeProfile?.name ?? model.nextProfileName
-          sheetMode = .saveProfile
-        } label: {
-          Label("Save Profile", systemImage: "plus.circle")
-            .labelStyle(.iconOnly)
-        }
-        .buttonStyle(.plain)
-      }
-
-      if model.profiles.isEmpty {
-        Text("Save the current workspace to keep its windows, tabs, and directories in sync.")
-          .font(.system(size: 12))
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-      } else {
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 8) {
-            ForEach(model.profiles) { profile in
-              Button {
-                model.activateProfile(profile.id)
-              } label: {
-                ProfileChip(
-                  profile: profile,
-                  isActive: model.activeProfileID == profile.id
-                )
-              }
-              .buttonStyle(.plain)
-              .contextMenu {
-                Button("Rename Profile") {
-                  draft = profile.name
-                  sheetMode = .renameProfile(profile.id)
-                }
-
-                Button("Delete Profile", role: .destructive) {
-                  model.deleteProfile(profile.id)
-                }
-              }
-            }
-          }
-          .padding(.vertical, 1)
-        }
-      }
-
-      Text(
-        model.activeProfile.map { "Live syncing \($0.name)." }
-          ?? "Open a profile to keep it updated automatically."
-      )
-      .font(.system(size: 11))
-      .foregroundStyle(.secondary.opacity(0.9))
-    }
-    .padding(.horizontal, 14)
-    .padding(.top, 12)
-    .padding(.bottom, 10)
-    .background {
-      ZStack {
-        ChromeMaterialView()
-        Color.black.opacity(0.14)
-      }
-    }
-    .overlay(alignment: .bottom) {
-      Rectangle()
-        .fill(.white.opacity(0.06))
-        .frame(height: 1)
     }
   }
 
@@ -149,15 +105,35 @@ struct SidebarView: View {
   }
 }
 
+private struct SidebarSectionHeader: View {
+  let title: String
+  let onAdd: () -> Void
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text(title)
+
+      Spacer()
+
+      Button(action: onAdd) {
+        Image(systemName: "plus")
+      }
+      .buttonStyle(.borderless)
+      .foregroundStyle(.secondary)
+      .help("Save Current Workspace")
+    }
+  }
+}
+
 private enum SidebarSheetMode: Identifiable {
-  case renameWindow(UUID)
+  case renamePane(UUID)
   case saveProfile
   case renameProfile(UUID)
 
   var id: String {
     switch self {
-    case .renameWindow(let windowID):
-      "window-\(windowID.uuidString)"
+    case .renamePane(let windowID):
+      "pane-\(windowID.uuidString)"
     case .saveProfile:
       "save-profile"
     case .renameProfile(let profileID):
@@ -167,8 +143,8 @@ private enum SidebarSheetMode: Identifiable {
 
   var title: String {
     switch self {
-    case .renameWindow:
-      "Rename Window"
+    case .renamePane:
+      "Rename Pane"
     case .saveProfile:
       "Save Profile"
     case .renameProfile:
@@ -178,42 +154,66 @@ private enum SidebarSheetMode: Identifiable {
 
   var prompt: String {
     switch self {
-    case .renameWindow:
-      "Window name"
+    case .renamePane:
+      "Pane name"
     case .saveProfile, .renameProfile:
       "Profile name"
     }
   }
 }
 
-private struct ProfileChip: View {
+private struct SidebarHintRow: View {
+  let title: String
+  let message: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.secondary)
+
+      Text(message)
+        .font(.caption)
+        .foregroundStyle(.tertiary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(.vertical, 4)
+  }
+}
+
+private struct SidebarProfileRow: View {
   let profile: WorkspaceProfileSnapshot
   let isActive: Bool
 
   var body: some View {
-    HStack(spacing: 6) {
-      Image(systemName: isActive ? "circle.fill" : "circle")
-        .font(.system(size: 7, weight: .bold))
+    HStack(spacing: 10) {
+      Image(systemName: isActive ? "checkmark.circle.fill" : "square.stack")
+        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
 
-      Text(profile.name)
-        .lineLimit(1)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(profile.name)
+          .lineLimit(1)
+
+        Text(isActive ? "Live sync enabled" : "Saved workspace")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+
+      Spacer(minLength: 8)
+
+      if isActive {
+        Text("Live")
+          .font(.caption2.weight(.semibold))
+          .foregroundStyle(.secondary)
+      }
     }
-    .font(.system(size: 12, weight: isActive ? .semibold : .regular))
-    .foregroundStyle(isActive ? .primary : .secondary)
-    .padding(.horizontal, 10)
-    .frame(height: 28)
-    .background(
-      Capsule()
-        .fill(isActive ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
-    )
-    .overlay(
-      Capsule()
-        .strokeBorder(.white.opacity(isActive ? 0.08 : 0.03), lineWidth: 1)
-    )
+    .padding(.vertical, 2)
+    .contentShape(Rectangle())
   }
 }
 
-private struct SidebarWindowRow: View {
+private struct SidebarPaneRow: View {
   let window: WorkspaceWindow
   let canClose: Bool
   let onRemove: () -> Void
@@ -222,6 +222,7 @@ private struct SidebarWindowRow: View {
   var body: some View {
     HStack(spacing: 10) {
       Image(systemName: "terminal")
+        .foregroundStyle(.secondary)
 
       VStack(alignment: .leading, spacing: 2) {
         Text(window.title)
@@ -237,20 +238,15 @@ private struct SidebarWindowRow: View {
 
       if canClose {
         Button(action: onRemove) {
-          Image(systemName: "xmark")
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: 18, height: 18)
-            .contentShape(Rectangle())
-            .background(
-              Circle()
-                .fill(.white.opacity(isHoveringClose ? 0.18 : 0))
-            )
+          Image(systemName: isHoveringClose ? "xmark.circle.fill" : "xmark.circle")
+            .foregroundStyle(.secondary)
         }
         .buttonStyle(.borderless)
+        .opacity(isHoveringClose ? 1 : 0.7)
         .onHover { isHoveringClose = $0 }
       }
     }
+    .padding(.vertical, 2)
   }
 
   private var subtitle: String {
@@ -268,19 +264,26 @@ private struct SidebarWindowRow: View {
   }
 }
 
-private struct OverlayScrollerConfigurator: NSViewRepresentable {
-  func makeNSView(context: Context) -> NSView { ScrollerStyleView() }
-  func updateNSView(_ nsView: NSView, context: Context) {}
-}
+private struct SidebarStatusBar: View {
+  let activeProfile: WorkspaceProfileSnapshot?
 
-private final class ScrollerStyleView: NSView {
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    DispatchQueue.main.async { [weak self] in
-      guard let scrollView = self?.enclosingScrollView else { return }
-      scrollView.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
-      scrollView.scrollerStyle = .overlay
-      scrollView.scrollerKnobStyle = .light
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: activeProfile == nil ? "circle.dashed" : "checkmark.circle.fill")
+        .foregroundStyle(activeProfile == nil ? Color.secondary : Color.accentColor)
+
+      Text(
+        activeProfile.map { "Syncing \($0.name)" }
+          ?? "Working locally"
+      )
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+
+      Spacer()
     }
+    .font(.caption)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(.bar)
   }
 }

@@ -104,7 +104,7 @@ final class WindowStore {
 
   func renameWindow(_ windowID: UUID, to title: String) {
     guard let window = windows.first(where: { $0.id == windowID }) else { return }
-    let sanitized = Self.sanitizedTitle(title, fallback: "Window")
+    let sanitized = Self.sanitizedTitle(title, fallback: "Pane")
     guard window.title != sanitized else { return }
     window.title = sanitized
     persist()
@@ -519,7 +519,7 @@ final class WindowStore {
 
     return .init(
       id: snapshot.id,
-      title: sanitizedTitle(snapshot.title, fallback: "Window"),
+      title: sanitizedTitle(snapshot.title, fallback: "Pane"),
       selectedPaneID: snapshot.selectedPaneID,
       panes: panes
     )
@@ -570,7 +570,7 @@ final class WindowStore {
 
     return .init(
       id: UUID(),
-      title: "Window \(index)",
+      title: "Pane \(index)",
       selectedPaneID: pane.id,
       panes: [pane]
     )

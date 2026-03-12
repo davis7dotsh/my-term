@@ -31,10 +31,13 @@ private struct PaneWorkspaceView: View {
         .zIndex(1)
       terminalDeck
     }
-    .background(Color.black.opacity(0.001))
+    .background(Color(nsColor: .windowBackgroundColor))
     .overlay {
       RoundedRectangle(cornerRadius: 0)
-        .strokeBorder(.white.opacity(isSelected ? 0.08 : 0), lineWidth: 1)
+        .strokeBorder(
+          isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
+          lineWidth: 1
+        )
     }
     .contentShape(Rectangle())
     .onTapGesture {
@@ -55,6 +58,7 @@ private struct PaneWorkspaceView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(nsColor: .underPageBackgroundColor))
   }
 
   private var isSelected: Bool {

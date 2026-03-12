@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct TabStripView: View {
@@ -8,36 +9,74 @@ struct TabStripView: View {
   @State private var renamingTab: TerminalTab?
 
   var body: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: 2) {
-        ForEach(pane.tabs) { tab in
-          TabChip(
-            tab: tab,
-            isSelected: pane.selectedTab?.id == tab.id,
-            canClose: true,
-            onSelect: { model.selectTab(windowID: window.id, paneID: pane.id, tabID: tab.id) },
-            onRename: {
-              renameDraft = tab.title
-              renamingTab = tab
-            },
-            onClose: { model.closeTab(windowID: window.id, paneID: pane.id, tabID: tab.id) }
-          )
+    HStack(spacing: 8) {
+      tabPicker
+        .frame(maxWidth: pickerWidth, alignment: .leading)
+
+      Spacer(minLength: 0)
+
+      if let selectedTab = pane.selectedTab, pane.tabs.count == 1 {
+        Text(Self.displayPath(for: selectedTab.workingDirectory))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+
+      Button {
+        model.addTab(to: window.id, paneID: pane.id)
+      } label: {
+        Label("New Tab", systemImage: "plus")
+      }
+      .labelStyle(.iconOnly)
+      .buttonStyle(.borderless)
+
+      Menu {
+        if let selectedTab = pane.selectedTab {
+          Button("Rename Tab…") {
+            renameDraft = selectedTab.title
+            renamingTab = selectedTab
+          }
+
+          Button("Close Tab", role: .destructive) {
+            model.closeTab(windowID: window.id, paneID: pane.id, tabID: selectedTab.id)
+          }
         }
+
+        if window.panes.count > 1 {
+          Divider()
+
+          Button("Close Pane", role: .destructive) {
+            model.closePane(windowID: window.id, paneID: pane.id)
+          }
+        }
+
+        Divider()
+
+        ForEach(pane.tabs) { tab in
+          Button {
+            model.selectTab(windowID: window.id, paneID: pane.id, tabID: tab.id)
+          } label: {
+            if pane.selectedTab?.id == tab.id {
+              Label(tab.title, systemImage: "checkmark")
+            } else {
+              Text(tab.title)
+            }
+          }
+        }
+      } label: {
+        Label("Tab Options", systemImage: "ellipsis.circle")
       }
-      .padding(.horizontal, 6)
-      .padding(.top, 6)
+      .menuStyle(.borderlessButton)
+      .labelStyle(.iconOnly)
+      .menuIndicator(.hidden)
+      .fixedSize()
     }
-    .frame(height: 38)
-    .background {
-      ZStack {
-        ChromeMaterialView()
-        Color.black.opacity(0.12)
-      }
-    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
+    .controlSize(.small)
+    .background(Color(nsColor: .windowBackgroundColor))
     .overlay(alignment: .bottom) {
-      Rectangle()
-        .fill(.white.opacity(0.06))
-        .frame(height: 1)
+      Divider()
     }
     .contentShape(Rectangle())
     .onTapGesture {
@@ -56,66 +95,57 @@ struct TabStripView: View {
       )
     }
   }
-}
 
-private struct TabChip: View {
-  let tab: TerminalTab
-  let isSelected: Bool
-  let canClose: Bool
-  let onSelect: () -> Void
-  let onRename: () -> Void
-  let onClose: () -> Void
-  @State private var isHovering = false
-  @State private var isHoveringClose = false
-
-  var body: some View {
-    HStack(spacing: 4) {
-      Text(tab.title)
+  @ViewBuilder
+  private var tabPicker: some View {
+    if pane.tabs.count <= 1, let selectedTab = pane.selectedTab {
+      Label(selectedTab.title, systemImage: "terminal")
+        .font(.callout.weight(.medium))
+        .foregroundStyle(.primary)
         .lineLimit(1)
-        .padding(.leading, 12)
-        .padding(.trailing, canClose ? 0 : 12)
-
-      if canClose {
-        Image(systemName: "xmark")
-          .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(.primary.opacity(0.6))
-          .frame(width: 20, height: 20)
-          .background(
-            Circle()
-              .fill(.primary.opacity(isHoveringClose ? 0.12 : 0))
-          )
-          .contentShape(Circle())
-          .onHover { isHoveringClose = $0 }
-          .onTapGesture { onClose() }
-          .padding(.trailing, 6)
+    } else if pane.tabs.count <= 4 {
+      Picker("Tab", selection: selectedTabID) {
+        ForEach(pane.tabs) { tab in
+          Text(tab.title)
+            .tag(tab.id)
+        }
       }
-    }
-    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-    .foregroundStyle(isSelected ? .primary : .secondary)
-    .frame(height: 28)
-    .background(
-      RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .fill(chipBackground)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .strokeBorder(.white.opacity(isSelected ? 0.08 : 0), lineWidth: 1)
-    )
-    .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    .onTapGesture { onSelect() }
-    .onHover { isHovering = $0 }
-    .contextMenu {
-      Button("Rename Tab") { onRename() }
-      if canClose {
-        Button("Close Tab", role: .destructive, action: onClose)
+      .labelsHidden()
+      .pickerStyle(.segmented)
+    } else {
+      Picker("Tab", selection: selectedTabID) {
+        ForEach(pane.tabs) { tab in
+          Text(tab.title)
+            .tag(tab.id)
+        }
       }
+      .labelsHidden()
+      .pickerStyle(.menu)
     }
   }
 
-  private var chipBackground: some ShapeStyle {
-    if isSelected {
-      return AnyShapeStyle(Color.white.opacity(0.10))
+  private var pickerWidth: CGFloat {
+    if pane.tabs.count <= 1 {
+      return 260
     }
-    return AnyShapeStyle(Color.white.opacity(isHovering ? 0.05 : 0))
+
+    return pane.tabs.count <= 4 ? 320 : 220
+  }
+
+  private var selectedTabID: Binding<UUID> {
+    .init(
+      get: { pane.selectedTab?.id ?? pane.tabs.first?.id ?? UUID() },
+      set: { tabID in
+        model.selectTab(windowID: window.id, paneID: pane.id, tabID: tabID)
+      }
+    )
+  }
+
+  private static func displayPath(for path: String) -> String {
+    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+    guard path.hasPrefix(homeDirectory) else { return path }
+
+    let suffix = path.dropFirst(homeDirectory.count)
+    return suffix.isEmpty ? "~" : "~\(suffix)"
   }
 }
