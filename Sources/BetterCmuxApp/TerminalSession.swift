@@ -20,6 +20,29 @@ final class TerminalSession: TerminalSessioning {
   private let workingDirectory: String
   private var reportedWorkingDirectory: String?
   private static let scrollbackLines = 10_000
+  private static let termName = "xterm-256color"
+  private static let terminalSessionEnvironmentKeysToRemove: Set<String> = [
+    "COLORTERM",
+    "GHOSTTY_BIN_DIR",
+    "GHOSTTY_RESOURCES_DIR",
+    "ITERM_PROFILE",
+    "ITERM_SESSION_ID",
+    "KITTY_LISTEN_ON",
+    "KITTY_WINDOW_ID",
+    "STY",
+    "TERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "TERM_SESSION_ID",
+    "TERMINAL_EMULATOR",
+    "TMUX",
+    "TMUX_PANE",
+    "VTE_VERSION",
+    "WEZTERM_EXECUTABLE",
+    "WEZTERM_PANE",
+    "WINDOW",
+    "WINDOWID",
+  ]
 
   private static let bgColor = NSColor(srgbRed: 0.051, green: 0.067, blue: 0.090, alpha: 1)
   private static let fgColor = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1)
@@ -84,9 +107,7 @@ final class TerminalSession: TerminalSessioning {
 
   private func launchShell() {
     let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-    var environment = ProcessInfo.processInfo.environment
-    environment["TERM_PROGRAM"] = "better-cmux"
-    environment["COLORTERM"] = "truecolor"
+    let environment = Self.shellEnvironment()
     terminalView.terminal.changeHistorySize(Self.scrollbackLines)
 
     terminalView.startProcess(
@@ -122,6 +143,23 @@ final class TerminalSession: TerminalSessioning {
     directory?
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .nilIfEmpty
+  }
+
+  private static func shellEnvironment(base: [String: String] = ProcessInfo.processInfo.environment)
+    -> [String: String]
+  {
+    var environment = base
+    terminalSessionEnvironmentKeysToRemove.forEach { environment.removeValue(forKey: $0) }
+
+    environment["TERM"] = termName
+    environment["TERM_PROGRAM"] = "better-cmux"
+    environment["COLORTERM"] = "truecolor"
+
+    if environment["LANG"] == nil, environment["LC_ALL"] == nil, environment["LC_CTYPE"] == nil {
+      environment["LANG"] = "en_US.UTF-8"
+    }
+
+    return environment
   }
 }
 
