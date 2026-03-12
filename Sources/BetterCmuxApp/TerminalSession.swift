@@ -226,8 +226,9 @@ private final class TerminalViewportView: NSView {
 
       let point = self.convert(event.locationInWindow, from: nil)
       guard self.bounds.contains(point) else { return event }
+      guard self.shouldInterceptScroll(event) else { return event }
 
-      self.handleScroll(event)
+      self.handleMouseReportingScroll(event)
       return nil
     }
   }
@@ -238,28 +239,35 @@ private final class TerminalViewportView: NSView {
     self.scrollMonitor = nil
   }
 
-  private func handleScroll(_ event: NSEvent) {
+  private func shouldInterceptScroll(_ event: NSEvent) -> Bool {
+    event.scrollingDeltaY != 0
+      && !terminalView.canScroll
+      && terminalView.allowMouseReporting
+      && terminalView.terminal.mouseMode != .off
+  }
+
+  private func handleMouseReportingScroll(_ event: NSEvent) {
+    resetPendingScrollDeltaIfNeeded(for: event)
+
     let delta = event.scrollingDeltaY
-    guard delta != 0 else { return }
-
-    if event.phase == .began || event.momentumPhase == .began {
-      pendingScrollDelta = 0
-    }
-
     let lines = resolvedScrollLines(for: event)
     guard lines > 0 else { return }
 
-    if terminalView.canScroll {
-      if delta > 0 {
-        terminalView.scrollUp(lines: lines)
-      } else {
-        terminalView.scrollDown(lines: lines)
-      }
-      return
-    }
-
-    guard terminalView.allowMouseReporting, terminalView.terminal.mouseMode != .off else { return }
     sendMouseWheelEvent(lines: lines, delta: delta, event: event)
+    resetPendingScrollDeltaIfEnded(for: event)
+  }
+
+  private func resetPendingScrollDeltaIfNeeded(for event: NSEvent) {
+    guard event.phase == .began || event.momentumPhase == .began else { return }
+    pendingScrollDelta = 0
+  }
+
+  private func resetPendingScrollDeltaIfEnded(for event: NSEvent) {
+    guard
+      event.phase == .ended || event.phase == .cancelled || event.momentumPhase == .ended
+        || event.momentumPhase == .cancelled
+    else { return }
+    pendingScrollDelta = 0
   }
 
   private func resolvedScrollLines(for event: NSEvent) -> Int {
@@ -269,8 +277,7 @@ private final class TerminalViewportView: NSView {
       guard lines > 0 else { return 0 }
 
       let direction: CGFloat = pendingScrollDelta > 0 ? 1 : -1
-      let consumed = CGFloat(lines) * Self.trackpadPointsPerLine * direction
-      pendingScrollDelta -= consumed
+      pendingScrollDelta -= CGFloat(lines) * Self.trackpadPointsPerLine * direction
       return lines
     }
 
